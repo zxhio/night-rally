@@ -1,0 +1,14 @@
+# Agent workspace local notes
+.agent/plans/
+.agent/reviews/
+
+# OS files
+.DS_Store
+
+# Future JS toolchain outputs
+node_modules/
+dist/
+coverage/
+
+# Logs
+*.log
