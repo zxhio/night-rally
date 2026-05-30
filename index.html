@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Night Rally</title>
+    <link rel="stylesheet" href="src/styles.css" />
+    <script src="src/main.js" defer></script>
+  </head>
+  <body>
+    <main class="game-shell">
+      <canvas id="game" aria-label="Night Rally driving prototype"></canvas>
+      <section class="hud" aria-live="polite">
+        <div class="metric">
+          <span>Speed (km/h)</span>
+          <strong id="speed">0</strong>
+        </div>
+        <div class="metric">
+          <span>G Force (G)</span>
+          <strong id="accel">0.00</strong>
+        </div>
+        <div class="metric">
+          <span>Distance (m)</span>
+          <strong id="distance">0.0</strong>
+        </div>
+        <div class="metric metric-time">
+          <span>Time (s)</span>
+          <strong id="time">0.00</strong>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
