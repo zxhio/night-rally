@@ -1,0 +1,29 @@
+{
+  "v": 1,
+  "desc": "Short vehicle speed and size model.",
+  "fields": {
+    "v": "schema_version",
+    "id": "vehicle_id",
+    "name": "display_name",
+    "src": "data_source",
+    "max": "max_speed_kmh",
+    "dim": {
+      "unit": "mm",
+      "l": "length",
+      "w": "width",
+      "h": "height",
+      "wb": "wheelbase"
+    },
+    "perf": {
+      "t_0_10": "0-10 km/h time_s",
+      "t_0_60": "0-60 km/h time_s",
+      "t_0_100": "0-100 km/h time_s",
+      "t_60_160": "60-160 km/h time_s",
+      "t_100_200": "100-200 km/h time_s"
+    },
+    "tail": "missing high-speed tail model",
+    "points": "launch speed-time-distance points",
+    "marks": "distance marks",
+    "pulls": "rolling acceleration tests"
+  }
+}
