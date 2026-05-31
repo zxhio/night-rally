@@ -34,15 +34,20 @@
         "release": "slide amount release rate per_s",
         "steer_at": "steer amount where slide begins 0..1",
         "min_kmh": "minimum speed for intentional slide kmh",
+        "hold_kmh": "minimum speed for keeping an already-started slide kmh",
         "full_kmh": "speed where slide reaches full authority kmh",
         "brake_bonus": "extra slide target while braking 0..1",
         "throttle_keep": "throttle authority retained while sliding",
         "drag": "speed loss scalar while sliding",
-        "decel_kmh_s": "minimum speed drop while sliding km/h/s"
+        "decel_kmh_s": "minimum speed drop while sliding km/h/s",
+        "sustain_kmh": "speed that full-throttle sliding tends to settle around km/h",
+        "recover_kmh_s": "speed recovery rate back to sustain while full-throttle sliding km/h/s"
       },
       "turn": {
         "drag": "speed loss scalar while gripping and turning",
-        "decel_kmh_s": "minimum speed drop while gripping and turning km/h/s"
+        "decel_kmh_s": "minimum speed drop while gripping and turning km/h/s",
+        "sustain_kmh": "speed that full-throttle grip turning tends to settle around km/h",
+        "recover_kmh_s": "speed recovery rate back to sustain while full-throttle grip turning km/h/s"
       },
       "assist": {
         "counter_steer": "slide reduction when steering against slip",

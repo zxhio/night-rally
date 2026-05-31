@@ -47,15 +47,20 @@
       "release": 6.4,
       "steer_at": 0.82,
       "min_kmh": 70,
-      "full_kmh": 116,
+      "hold_kmh": 50,
+      "full_kmh": 90,
       "brake_bonus": 0.16,
       "throttle_keep": 0.82,
-      "drag": 0.34,
-      "decel_kmh_s": 24
+      "drag": 0.24,
+      "decel_kmh_s": 16,
+      "sustain_kmh": 58,
+      "recover_kmh_s": 22
     },
     "turn": {
-      "drag": 0.055,
-      "decel_kmh_s": 3.8
+      "drag": 2.0,
+      "decel_kmh_s": 3.8,
+      "sustain_kmh": 70,
+      "recover_kmh_s": 24
     },
     "assist": {
       "counter_steer": 0.62,

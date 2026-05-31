@@ -36,14 +36,19 @@ handling.slide.build                  侧滑强度建立速度, 1/s
 handling.slide.release                侧滑强度释放速度, 1/s
 handling.slide.steer_at               进入主动侧滑的转向输入阈值, 0..1
 handling.slide.min_kmh                主动侧滑开始速度, km/h，当前 120 封顶 baseline 使用 70
+handling.slide.hold_kmh               已经进入侧滑后的最低维持速度, km/h
 handling.slide.full_kmh               主动侧滑完全生效速度, km/h
 handling.slide.brake_bonus            刹车带来的额外侧滑目标, 0..1
 handling.slide.throttle_keep          侧滑时保留的油门效率, 0..1
 handling.slide.drag                   侧滑前向掉速系数, 1/s
 handling.slide.decel_kmh_s            侧滑时最小掉速, km/h/s
+handling.slide.sustain_kmh            按住油门漂移时收敛的弯中速度, km/h
+handling.slide.recover_kmh_s          按住油门漂移低于弯中速度时的回补速度, km/h/s
 
 handling.turn.drag                    抓地转向前向掉速系数, 1/s
 handling.turn.decel_kmh_s             抓地转向最小掉速, km/h/s
+handling.turn.sustain_kmh             按住油门抓地转向时收敛的弯中速度, km/h
+handling.turn.recover_kmh_s           按住油门抓地转向低于弯中速度时的回补速度, km/h/s
 
 handling.assist.counter_steer         反打降低侧滑/增加角速度的辅助倍率
 handling.assist.recover               反打时额外行进方向追随速度, 1/s
@@ -145,8 +150,16 @@ slipAbsDeg = abs(slipDeg)
 steerPressure =
   smoothstep(handling.slide.steer_at, 1, abs(steerNormNext))
 
-speedPressure =
+enterSpeedPressure =
   smoothstep(handling.slide.min_kmh, handling.slide.full_kmh, speedAbsKmh)
+
+holdSpeedPressure =
+  smoothstep(handling.slide.hold_kmh, handling.slide.full_kmh, speedAbsKmh)
+
+speedPressure =
+  driftAmount > 0.04
+    ? max(enterSpeedPressure, holdSpeedPressure)
+    : enterSpeedPressure
 ```
 
 被动侧滑来自已有滑移角：
@@ -234,29 +247,67 @@ moveAngleRadNext =
 
 抓地转向会有轻微速度损失；侧滑会有明显速度损失，并削弱油门效率。这样点按方向仍然可控，持续压方向会慢慢丢速度，进入漂移后会丢更多速度。
 
+按住油门时，转向/漂移掉速不是无限扣到 0，而是收敛到可调的弯中维持速度。松开油门或刹车时，维持速度为 0，车辆可以自然滑停或被刹停。
+
 ```txt
 throttleScale =
   1 - driftAmount * (1 - handling.slide.throttle_keep)
 
 turnAmount =
   smoothstep(0.08, 1, abs(steerNormNext))
+  * smoothstep(25, 85, speedAbsKmh)
   * (1 - driftAmountNext)
 
-speedKmhAfterTurnAndSlide =
+sustainKmh =
+  inputThrottle > 0
+    ? lerp(
+        handling.turn.sustain_kmh,
+        handling.slide.sustain_kmh,
+        driftAmountNext
+      )
+    : 0
+
+excessKmh =
+  max(0, speedAbsKmh - sustainKmh)
+
+lossKmh =
   min(
-    speedKmhNext
-      * exp(
-        -(
-          handling.turn.drag * turnAmount
-          + handling.slide.drag * driftAmountNext
-        ) * dt
-      ),
-    speedKmhBeforeInput
-      - (
+    excessKmh,
+    (
+      excessKmh
+      * (
+        handling.turn.drag * turnAmount
+        + handling.slide.drag * driftAmountNext
+      )
+      + (
         handling.turn.decel_kmh_s * turnAmount
         + handling.slide.decel_kmh_s * driftAmountNext
-      ) * dt
+      )
+    ) * dt
   )
+
+speedKmhAfterTurnAndSlide =
+  speedAbsKmh - lossKmh
+
+cornerAmount =
+  max(turnAmount, driftAmountNext)
+
+recoverKmhS =
+  lerp(
+    handling.turn.recover_kmh_s,
+    handling.slide.recover_kmh_s,
+    driftAmountNext
+  ) * cornerAmount
+
+speedKmhAfterSustain =
+  inputThrottle > 0
+    and cornerAmount > 0
+    and speedKmhAfterTurnAndSlide < sustainKmh
+    ? min(
+        sustainKmh,
+        speedKmhAfterTurnAndSlide + recoverKmhS * dt
+      )
+    : speedKmhAfterTurnAndSlide
 ```
 
 ## 位移积分

@@ -1,4 +1,4 @@
-const VEHICLE_DATA_URL = "data/cars/baseline.json";
+const VEHICLE_DATA_URL = "data/cars/baseline.json?v=20260531-turn-sustain-2";
 
 const DEFAULT_TUNING = {
   reverseAccelerationScale: 0.5,
@@ -54,9 +54,13 @@ const SPEED_SCALE = KMH_PER_GAME_SPEED * PX_PER_METER / 3.6;
 const METERS_PER_PIXEL = 1 / PX_PER_METER;
 const STANDARD_G = 9.80665;
 const SKID_MARKS_MAX = 420;
+const DRIFT_ACTIVE_MIN_AMOUNT = 0.04;
+const DRIFT_RESET_MIN_AMOUNT = 0.005;
 const DRIFT_TRAIL_MIN_AMOUNT = 0.08;
 const DRIFT_TRAIL_MIN_KMH = 20;
 const DRIFT_TRAIL_FADE = 0.996;
+const BRAKE_TRAIL_MIN_KMH = 35;
+const BRAKE_TRAIL_INTENSITY = 0.3;
 const TURN_RADIUS_MAX_M = 999;
 
 let vehicleModel = null;
@@ -169,8 +173,8 @@ function update(dt) {
   let right = { x: -forward.y, y: forward.x };
   const travel = angleVector(car.moveAngleRad);
   let forwardSpeed = dot(car.vx, car.vy, travel.x, travel.y);
-  const speedBeforeInput = forwardSpeed;
   const previousDriftAmount = driftAmount;
+  const brakingForward = input.throttle < 0 && forwardSpeed > 0;
 
   if (input.throttle > 0) {
     if (forwardSpeed < 0) {
@@ -207,14 +211,15 @@ function update(dt) {
   forward = angleVector(car.bodyAngleRad);
   right = { x: -forward.y, y: forward.x };
 
-  const slideTarget = getSlideTarget(input, speedAbsKmh, slipBeforeDeg);
+  const slideTarget = getSlideTarget(input, speedAbsKmh, slipBeforeDeg, brakingForward);
   const slideRate = slideTarget > driftAmount ? TUNING.slideBuildRate : TUNING.slideReleaseRate;
   driftAmount = expFollow(driftAmount, slideTarget, slideRate, dt);
-  driftActive = driftAmount > 0.04;
-  if (!driftActive) {
+  driftActive = driftAmount > DRIFT_ACTIVE_MIN_AMOUNT;
+  if (driftAmount < DRIFT_RESET_MIN_AMOUNT && slideTarget < DRIFT_RESET_MIN_AMOUNT) {
     driftAmount = 0;
   }
-  forwardSpeed = applyTurnAndSlideSpeedLoss(forwardSpeed, speedBeforeInput, Math.abs(input.steer), driftAmount, dt);
+  forwardSpeed = applyTurnAndSlideSpeedLoss(forwardSpeed, Math.abs(input.steer), driftAmount, input.throttle, dt);
+  forwardSpeed = applyCornerSustain(forwardSpeed, Math.abs(input.steer), driftAmount, input.throttle, dt);
 
   const counterSteer = Math.sign(input.steer) !== 0 && Math.sign(input.steer) === -Math.sign(slipBeforeDeg);
   const recoveryGrip = counterSteer ? TUNING.counterSteerAssist * driftAmount + TUNING.recoverAssist : 0;
@@ -236,7 +241,8 @@ function update(dt) {
 
   resolveBounds();
   slipDeg = Math.abs(radToDeg(angleDelta(car.bodyAngleRad, car.moveAngleRad)));
-  addSkidMarks(forward, right, moveDirection, driftAmount, speedAbsKmh);
+  const trailIntensity = getTireTrailIntensity(driftAmount, brakingForward, speedAbsKmh);
+  addSkidMarks(forward, right, moveDirection, trailIntensity, speedAbsKmh);
   updateCamera(dt);
   updateHud();
 }
@@ -682,13 +688,18 @@ function readVehicleHandling(handling) {
     slideReleaseRate: readNumber(slide.release, "handling.slide.release"),
     slideSteerAt: readNumber(slide.steer_at, "handling.slide.steer_at"),
     slideMinKmh: readNumber(slide.min_kmh, "handling.slide.min_kmh"),
+    slideHoldKmh: readNumber(slide.hold_kmh, "handling.slide.hold_kmh"),
     slideFullKmh: readNumber(slide.full_kmh, "handling.slide.full_kmh"),
     slideBrakeBonus: readNumber(slide.brake_bonus, "handling.slide.brake_bonus"),
     slideThrottleKeep: readNumber(slide.throttle_keep, "handling.slide.throttle_keep"),
     slideDrag: readNumber(slide.drag, "handling.slide.drag"),
     slideDecelKmhS: readNumber(slide.decel_kmh_s, "handling.slide.decel_kmh_s"),
+    slideSustainKmh: readNumber(slide.sustain_kmh, "handling.slide.sustain_kmh"),
+    slideRecoverKmhS: readNumber(slide.recover_kmh_s, "handling.slide.recover_kmh_s"),
     turnDrag: readNumber(turn.drag, "handling.turn.drag"),
     turnDecelKmhS: readNumber(turn.decel_kmh_s, "handling.turn.decel_kmh_s"),
+    turnSustainKmh: readNumber(turn.sustain_kmh, "handling.turn.sustain_kmh"),
+    turnRecoverKmhS: readNumber(turn.recover_kmh_s, "handling.turn.recover_kmh_s"),
     counterSteerAssist: readNumber(assist.counter_steer, "handling.assist.counter_steer"),
     recoverAssist: readNumber(assist.recover, "handling.assist.recover"),
     straightenAssist: readNumber(assist.straighten, "handling.assist.straighten"),
@@ -945,17 +956,27 @@ function getMaxYawDegS(speedAbsKmh) {
   return lerp(TUNING.yawMidDegS, TUNING.yawHighDegS, t);
 }
 
-function getSlideTarget(input, speedAbsKmh, currentSlipDeg) {
+function getSlideTarget(input, speedAbsKmh, currentSlipDeg, brakingForward) {
   const steerAmount = Math.abs(input.steer);
   const steerPressure = smoothstep(TUNING.slideSteerAt, 1, steerAmount);
-  const speedPressure = smoothstep(TUNING.slideMinKmh, TUNING.slideFullKmh, speedAbsKmh);
+  const enterSpeedPressure = smoothstep(TUNING.slideMinKmh, TUNING.slideFullKmh, speedAbsKmh);
+  const holdSpeedPressure = smoothstep(TUNING.slideHoldKmh, TUNING.slideFullKmh, speedAbsKmh);
+  const speedPressure = driftAmount > DRIFT_ACTIVE_MIN_AMOUNT
+    ? Math.max(enterSpeedPressure, holdSpeedPressure)
+    : enterSpeedPressure;
   const slipPressure = smoothstep(TUNING.slipSoftDeg, TUNING.slipMaxDeg, Math.abs(currentSlipDeg));
-  const brakePressure = input.throttle < 0 ? TUNING.slideBrakeBonus : 0;
+  const brakePressure = brakingForward ? TUNING.slideBrakeBonus : 0;
   const counterSteer = Math.sign(input.steer) !== 0 && Math.sign(input.steer) === -Math.sign(currentSlipDeg);
   const recovery = counterSteer ? TUNING.counterSteerAssist * driftAmount : 0;
   const target = steerPressure * speedPressure + slipPressure * 0.55 + brakePressure - recovery;
 
   return clamp(target, 0, 1);
+}
+
+function getTireTrailIntensity(slideAmount, brakingForward, speedKmh) {
+  const brakeTrail = brakingForward && speedKmh > BRAKE_TRAIL_MIN_KMH ? BRAKE_TRAIL_INTENSITY : 0;
+
+  return Math.max(slideAmount, brakeTrail);
 }
 
 function getTurnRadiusM(speedAbsKmh, yawRate) {
@@ -1043,21 +1064,59 @@ function applyIdleCoast(forwardSpeed, maxSpeed, dt) {
   return Math.sign(forwardSpeed) * nextSpeed;
 }
 
-function applyTurnAndSlideSpeedLoss(forwardSpeed, speedBeforeInput, steerAmount, slideAmount, dt) {
-  const turnAmount = smoothstep(0.08, 1, steerAmount) * (1 - slideAmount);
+function applyTurnAndSlideSpeedLoss(forwardSpeed, steerAmount, slideAmount, throttle, dt) {
+  const speedKmh = Math.abs(toKmh(toGameSpeed(forwardSpeed)));
+  const speedPressure = smoothstep(25, 85, speedKmh);
+  const turnAmount = smoothstep(0.08, 1, steerAmount) * speedPressure * (1 - slideAmount);
   if (turnAmount <= 0 && slideAmount <= 0) {
     return forwardSpeed;
   }
 
-  const sign = Math.sign(forwardSpeed) || Math.sign(speedBeforeInput) || 1;
-  const speed = Math.abs(forwardSpeed);
-  const inputSpeed = Math.abs(speedBeforeInput);
+  const sign = Math.sign(forwardSpeed) || 1;
+  const speedPx = Math.abs(forwardSpeed);
+  const speedGame = toGameSpeed(speedPx);
+  const speedKmhAbs = toKmh(speedGame);
+  const sustainKmh = throttle > 0 ? getCornerSustainKmh(slideAmount) : 0;
+  const excessKmh = Math.max(0, speedKmhAbs - sustainKmh);
+
+  if (excessKmh <= 0) {
+    return forwardSpeed;
+  }
+
   const drag = TUNING.turnDrag * turnAmount + TUNING.slideDrag * slideAmount;
   const decelKmhS = TUNING.turnDecelKmhS * turnAmount + TUNING.slideDecelKmhS * slideAmount;
-  const dragSpeed = speed * Math.exp(-drag * dt);
-  const decelSpeed = Math.max(0, inputSpeed - toPixels(toGameSpeedFromKmh(decelKmhS)) * dt);
+  const lossKmh = Math.min(excessKmh, (excessKmh * drag + decelKmhS) * dt);
+  const nextSpeed = toPixels(toGameSpeedFromKmh(Math.max(0, speedKmhAbs - lossKmh)));
 
-  return sign * Math.min(dragSpeed, decelSpeed);
+  return sign * nextSpeed;
+}
+
+function applyCornerSustain(forwardSpeed, steerAmount, slideAmount, throttle, dt) {
+  if (throttle <= 0) {
+    return forwardSpeed;
+  }
+
+  const turnAmount = smoothstep(0.08, 1, steerAmount) * (1 - slideAmount);
+  const cornerAmount = Math.max(turnAmount, slideAmount);
+  if (cornerAmount <= 0) {
+    return forwardSpeed;
+  }
+
+  const sign = Math.sign(forwardSpeed) || 1;
+  const speedKmh = Math.abs(toKmh(toGameSpeed(forwardSpeed)));
+  const sustainKmh = getCornerSustainKmh(slideAmount);
+  if (speedKmh >= sustainKmh) {
+    return forwardSpeed;
+  }
+
+  const recoverKmhS = lerp(TUNING.turnRecoverKmhS, TUNING.slideRecoverKmhS, slideAmount) * cornerAmount;
+  const nextSpeedKmh = Math.min(sustainKmh, speedKmh + recoverKmhS * dt);
+
+  return sign * toPixels(toGameSpeedFromKmh(nextSpeedKmh));
+}
+
+function getCornerSustainKmh(slideAmount) {
+  return lerp(TUNING.turnSustainKmh, TUNING.slideSustainKmh, slideAmount);
 }
 
 function getVehicleAcceleration(speedKmh) {
