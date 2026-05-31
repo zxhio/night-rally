@@ -329,11 +329,12 @@ accelCurve = sortByTime(points + pullsGlobal + marks)
 vehicle.max       最高车速 km/h
 vehicle.dim       车辆尺寸
 vehicle.points    静止起步速度-时间-距离点
-vehicle.marks     距离锚点
-vehicle.pulls     滚动加速测试
 vehicle.brake     刹车测试
 vehicle.tail      高速尾段估算规则
+vehicle.handling  转向和轮胎抓地参数，见 `specs/handling-model.md`
 ```
+
+`marks` 和 `pulls` 只作为以后接入实测数据的可选扩展。当前 baseline 车辆数据为了便于调车，只保留 `points`、`brake`、`tail` 和 `handling`。
 
 ### 刹车曲线
 

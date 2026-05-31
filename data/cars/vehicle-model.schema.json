@@ -1,11 +1,11 @@
 {
   "v": 1,
-  "desc": "Short vehicle speed and size model.",
+  "desc": "Baseline arcade vehicle speed, size, and handling model.",
   "fields": {
     "v": "schema_version",
     "id": "vehicle_id",
     "name": "display_name",
-    "src": "data_source",
+    "src": "data_source_or_profile_type",
     "max": "max_speed_kmh",
     "dim": {
       "unit": "mm",
@@ -14,16 +14,44 @@
       "h": "height",
       "wb": "wheelbase"
     },
-    "perf": {
-      "t_0_10": "0-10 km/h time_s",
-      "t_0_60": "0-60 km/h time_s",
-      "t_0_100": "0-100 km/h time_s",
-      "t_60_160": "60-160 km/h time_s",
-      "t_100_200": "100-200 km/h time_s"
+    "handling": {
+      "mode": "handling model selector, arcade_v2 is current",
+      "steer": {
+        "build": "steering input build rate per_s",
+        "release": "steering input release rate per_s",
+        "speed_band": "low/mid/high speed anchors for steering kmh",
+        "yaw_deg_s": "low/mid/high max body yaw rate deg/s",
+        "low_speed_boost": "extra steering authority near 0 km/h"
+      },
+      "tires": {
+        "follow": "normal travel direction follow rate per_s",
+        "slide_follow": "travel direction follow rate while sliding per_s",
+        "slip_soft_deg": "slip angle where slide starts to show deg",
+        "slip_max_deg": "slip angle used as full slide scale deg"
+      },
+      "slide": {
+        "build": "slide amount build rate per_s",
+        "release": "slide amount release rate per_s",
+        "steer_at": "steer amount where slide begins 0..1",
+        "min_kmh": "minimum speed for intentional slide kmh",
+        "full_kmh": "speed where slide reaches full authority kmh",
+        "brake_bonus": "extra slide target while braking 0..1",
+        "throttle_keep": "throttle authority retained while sliding",
+        "drag": "speed loss scalar while sliding",
+        "decel_kmh_s": "minimum speed drop while sliding km/h/s"
+      },
+      "turn": {
+        "drag": "speed loss scalar while gripping and turning",
+        "decel_kmh_s": "minimum speed drop while gripping and turning km/h/s"
+      },
+      "assist": {
+        "counter_steer": "slide reduction when steering against slip",
+        "recover": "extra travel follow while counter-steering",
+        "straighten": "body straightening assist when no steering"
+      }
     },
-    "tail": "missing high-speed tail model",
-    "points": "launch speed-time-distance points",
-    "marks": "distance marks",
-    "pulls": "rolling acceleration tests"
+    "tail": "high-speed tail acceleration decay model",
+    "points": "simulated launch speed-time-distance points",
+    "brake": "simplified braking total; runtime uses brake.from and brake.total.t"
   }
 }
