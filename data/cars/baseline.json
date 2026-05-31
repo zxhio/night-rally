@@ -3,7 +3,7 @@
   "id": "baseline",
   "name": "Baseline",
   "src": "baseline_sim",
-  "max": 120,
+  "max": 160,
   "brake": {
     "from": 100,
     "total": {
@@ -39,14 +39,14 @@
     "tires": {
       "follow": 13.5,
       "slide_follow": 4.4,
-      "slip_soft_deg": 14,
-      "slip_max_deg": 46
+      "slip_soft_deg": 16.8,
+      "slip_max_deg": 55.2
     },
     "slide": {
       "build": 5.2,
       "release": 6.4,
       "steer_at": 0.82,
-      "min_kmh": 70,
+      "min_kmh": 80,
       "hold_kmh": 50,
       "full_kmh": 90,
       "brake_bonus": 0.16,
@@ -57,8 +57,8 @@
       "recover_kmh_s": 22
     },
     "turn": {
-      "drag": 2.0,
-      "decel_kmh_s": 3.8,
+      "drag": 1.6,
+      "decel_kmh_s": 3.04,
       "sustain_kmh": 70,
       "recover_kmh_s": 24
     },
@@ -69,10 +69,10 @@
     }
   },
   "tail": {
-    "from": 112,
+    "from": 160,
     "mode": "linear_decay",
-    "slow": 18,
-    "min": 0.2
+    "slow": 40,
+    "min": 0.45
   },
   "points": [
     { "v": 10, "t": 0.3, "d": 0.45 },
@@ -85,7 +85,11 @@
     { "v": 80, "t": 3.75, "d": 48.5 },
     { "v": 90, "t": 4.4, "d": 64.0 },
     { "v": 100, "t": 5.05, "d": 82.0 },
-    { "v": 110, "t": 6.35, "d": 120.0 },
-    { "v": 120, "t": 8.4, "d": 185.0 }
+    { "v": 110, "t": 6.04, "d": 110.2 },
+    { "v": 120, "t": 7.2, "d": 147.5 },
+    { "v": 130, "t": 8.42, "d": 190.3 },
+    { "v": 140, "t": 9.74, "d": 240.1 },
+    { "v": 150, "t": 11.38, "d": 306.1 },
+    { "v": 160, "t": 13.18, "d": 384.0 }
   ]
 }

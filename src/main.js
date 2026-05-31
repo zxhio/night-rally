@@ -1,4 +1,4 @@
-const VEHICLE_DATA_URL = "data/cars/baseline.json?v=20260531-turn-sustain-2";
+const VEHICLE_DATA_URL = "data/cars/baseline.json?v=20260601-turn-loss-drift-threshold";
 
 const DEFAULT_TUNING = {
   reverseAccelerationScale: 0.5,
@@ -16,6 +16,53 @@ const ROAD_MARKING = {
   edgeOffsetM: 2.8,
 };
 
+const CIRCUIT_PATH = [
+  [9716, 3615],
+  [9716, 2273],
+  [9605, 1527],
+  [9119, 1228],
+  [8634, 1489],
+  [8149, 1527],
+  [7701, 1414],
+  [7329, 1787],
+  [7403, 2346],
+  [7888, 2868],
+  [8298, 3316],
+  [8000, 3801],
+  [8560, 4175],
+  [9157, 4436],
+  [8970, 4958],
+  [8038, 5220],
+  [6881, 5145],
+  [6210, 4921],
+  [6060, 4287],
+  [6284, 3690],
+  [5874, 3353],
+  [5351, 3615],
+  [5166, 4137],
+  [4792, 4175],
+  [4530, 3690],
+  [4455, 2944],
+  [4083, 2682],
+  [3896, 2273],
+  [3000, 2346],
+  [1882, 2607],
+  [1173, 2832],
+  [1098, 3241],
+  [1882, 3391],
+  [3225, 3353],
+  [3934, 3540],
+  [4403, 4802],
+  [5216, 5703],
+  [6248, 5956],
+  [7552, 5816],
+  [8859, 6113],
+  [9828, 6039],
+  [10314, 5554],
+  [10051, 4584],
+];
+const CIRCUIT_COLLISION_PATH = buildSmoothedCircuitSamples(CIRCUIT_PATH, 16);
+
 const TRACKS = {
   straight: {
     name: "Straight",
@@ -27,24 +74,24 @@ const TRACKS = {
   },
   circuit: {
     name: "Circuit",
-    width: 1800,
-    height: 1200,
-    startX: 360,
-    startY: 880,
-    startAngle: 0,
-    centerX: 900,
-    centerY: 600,
-    outerRx: 660,
-    outerRy: 420,
-    innerRx: 390,
-    innerRy: 205,
+    width: 10800,
+    height: 6800,
+    startX: 9716,
+    startY: 3615,
+    startAngle: getPathSegmentAngle(CIRCUIT_PATH, 0),
+    path: CIRCUIT_PATH,
+    collisionPath: CIRCUIT_COLLISION_PATH,
+    roadHalfWidth: 70,
+    curbWidth: 21,
+    grassWidth: 96,
+    fencePadding: 30,
   },
 };
 
 const WORLD = {
-  width: TRACKS.straight.width,
-  height: TRACKS.straight.height,
-  runwayY: TRACKS.straight.startY,
+  width: TRACKS.circuit.width,
+  height: TRACKS.circuit.height,
+  runwayY: TRACKS.circuit.startY,
   runwayWidth: 14 * PX_PER_METER,
   margin: 44,
 };
@@ -62,6 +109,27 @@ const DRIFT_TRAIL_FADE = 0.996;
 const BRAKE_TRAIL_MIN_KMH = 35;
 const BRAKE_TRAIL_INTENSITY = 0.3;
 const TURN_RADIUS_MAX_M = 999;
+const SURFACE = {
+  road: { label: "Road", speedDropScale: 1, accelScale: 1, steer: 1 },
+  curb: { label: "Curb", speedDropScale: 0.95, accelScale: 1, steer: 0.94 },
+  grass: { label: "Grass", speedDropScale: 0.9, accelScale: 0.8, steer: 0.8 },
+};
+const TRACK_PALETTE = {
+  grassOuter: "#4f7136",
+  grassInner: "#6f8d4c",
+  curbOuter: "#c7cbc3",
+  curbInner: "#8f9893",
+  road: "#343a38",
+};
+const FENCE_COLLISION = {
+  driftKeep: 0.25,
+};
+const DIRT_SPECKS = Array.from({ length: 180 }, (_, index) => ({
+  x: (index * 149 + 83) % TRACKS.circuit.width,
+  y: (index * 211 + 47) % TRACKS.circuit.height,
+  r: 1 + (index % 4) * 0.55,
+  a: 0.05 + (index % 5) * 0.018,
+}));
 
 let vehicleModel = null;
 let TUNING = null;
@@ -80,6 +148,7 @@ const slipEl = document.querySelector("#slip");
 const driftEl = document.querySelector("#drift");
 const yawEl = document.querySelector("#yaw");
 const radiusEl = document.querySelector("#radius");
+const surfaceEl = document.querySelector("#surface");
 const trackButtons = [...document.querySelectorAll("[data-track]")];
 
 const keys = new Set();
@@ -108,7 +177,9 @@ let driftActive = false;
 let slipDeg = 0;
 let yawRateDegS = 0;
 let turnRadiusM = TURN_RADIUS_MAX_M;
-let activeTrackId = "straight";
+let activeTrackId = "circuit";
+let currentSurface = SURFACE.road;
+let previousSurface = SURFACE.road;
 const skidMarks = [];
 
 window.addEventListener("keydown", (event) => {
@@ -119,11 +190,11 @@ window.addEventListener("keydown", (event) => {
   }
 
   if (event.code === "Digit1") {
-    setTrack("straight");
+    setTrack("circuit");
   }
 
   if (event.code === "Digit2") {
-    setTrack("circuit");
+    setTrack("straight");
   }
 });
 
@@ -165,7 +236,9 @@ function update(dt) {
     testActive = true;
   }
 
-  steeringInput = updateSteeringInput(steeringInput, input.steer, dt);
+  previousSurface = currentSurface;
+  currentSurface = getSurfaceAt(car.x, car.y);
+  steeringInput = updateSteeringInput(steeringInput, input.steer * currentSurface.steer, dt);
   input.steer = steeringInput;
   const maxSpeedPx = toPixels(TUNING.maxSpeed);
   const reverseMaxSpeedPx = toPixels(TUNING.reverseMaxSpeed);
@@ -173,6 +246,7 @@ function update(dt) {
   let right = { x: -forward.y, y: forward.x };
   const travel = angleVector(car.moveAngleRad);
   let forwardSpeed = dot(car.vx, car.vy, travel.x, travel.y);
+  forwardSpeed = applySurfaceEntrySpeedDrop(forwardSpeed, previousSurface, currentSurface);
   const previousDriftAmount = driftAmount;
   const brakingForward = input.throttle < 0 && forwardSpeed > 0;
 
@@ -180,7 +254,7 @@ function update(dt) {
     if (forwardSpeed < 0) {
       forwardSpeed = applyBrake(forwardSpeed, dt);
     } else {
-      const throttleScale = 1 - previousDriftAmount * (1 - TUNING.slideThrottleKeep);
+      const throttleScale = (1 - previousDriftAmount * (1 - TUNING.slideThrottleKeep)) * currentSurface.accelScale;
       forwardSpeed = applyThrottle(forwardSpeed, maxSpeedPx, throttleScale, dt);
     }
   }
@@ -196,7 +270,6 @@ function update(dt) {
   if (input.throttle === 0) {
     forwardSpeed = applyIdleCoast(forwardSpeed, maxSpeedPx, dt);
   }
-
   forwardSpeed = clamp(forwardSpeed, -reverseMaxSpeedPx, maxSpeedPx);
 
   const speedAbsKmh = Math.abs(toKmh(toGameSpeed(forwardSpeed)));
@@ -230,16 +303,21 @@ function update(dt) {
   const moveDirection = angleVector(car.moveAngleRad);
   car.vx = moveDirection.x * forwardSpeed;
   car.vy = moveDirection.y * forwardSpeed;
+  const previousX = car.x;
+  const previousY = car.y;
   car.x += car.vx * dt;
   car.y += car.vy * dt;
 
   if (testActive) {
     testTime += dt;
   }
-  testDistance = Math.max(0, (car.x - 260) * METERS_PER_PIXEL);
+  testDistance += Math.hypot(car.x - previousX, car.y - previousY) * METERS_PER_PIXEL;
   updateAccelerationMeter(dt);
 
   resolveBounds();
+  if (activeTrackId === "circuit") {
+    resolveTrackFence();
+  }
   slipDeg = Math.abs(radToDeg(angleDelta(car.bodyAngleRad, car.moveAngleRad)));
   const trailIntensity = getTireTrailIntensity(driftAmount, brakingForward, speedAbsKmh);
   addSkidMarks(forward, right, moveDirection, trailIntensity, speedAbsKmh);
@@ -265,8 +343,12 @@ function draw() {
 }
 
 function drawWorld() {
-  ctx.fillStyle = "#26362d";
+  ctx.fillStyle = activeTrackId === "circuit" ? "#b78345" : "#26362d";
   ctx.fillRect(0, 0, WORLD.width, WORLD.height);
+
+  if (activeTrackId === "circuit") {
+    drawDirtTexture();
+  }
 
   ctx.strokeStyle = "rgba(238, 243, 236, 0.04)";
   ctx.lineWidth = 1;
@@ -277,9 +359,18 @@ function drawWorld() {
     ctx.stroke();
   }
 
-  ctx.strokeStyle = "#111514";
+  ctx.strokeStyle = activeTrackId === "circuit" ? "rgba(54, 41, 28, 0.42)" : "#111514";
   ctx.lineWidth = 24;
   ctx.strokeRect(12, 12, WORLD.width - 24, WORLD.height - 24);
+}
+
+function drawDirtTexture() {
+  for (const speck of DIRT_SPECKS) {
+    ctx.fillStyle = `rgba(91, 59, 29, ${speck.a * 0.72})`;
+    ctx.beginPath();
+    ctx.arc(speck.x, speck.y, speck.r, 0, Math.PI * 2);
+    ctx.fill();
+  }
 }
 
 function drawTrack() {
@@ -325,48 +416,115 @@ function drawRunway() {
 
 function drawCircuit() {
   const track = TRACKS.circuit;
+  const grassHalfWidth = track.roadHalfWidth + track.curbWidth + track.grassWidth;
+  const curbHalfWidth = track.roadHalfWidth + track.curbWidth;
 
-  ctx.fillStyle = "#171c1c";
-  drawEllipse(track.centerX, track.centerY, track.outerRx + 34, track.outerRy + 34);
-  ctx.fill();
+  ctx.save();
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
 
-  ctx.fillStyle = "#343a38";
-  drawEllipse(track.centerX, track.centerY, track.outerRx, track.outerRy);
-  ctx.fill();
+  ctx.strokeStyle = TRACK_PALETTE.grassOuter;
+  ctx.lineWidth = grassHalfWidth * 2;
+  strokeCircuitPath(track.path);
+  ctx.stroke();
 
-  ctx.fillStyle = "#26362d";
-  drawEllipse(track.centerX, track.centerY, track.innerRx, track.innerRy);
-  ctx.fill();
+  ctx.strokeStyle = TRACK_PALETTE.curbOuter;
+  ctx.lineWidth = curbHalfWidth * 2;
+  strokeCircuitPath(track.path);
+  ctx.stroke();
+
+  ctx.setLineDash([10, 10]);
+  ctx.strokeStyle = "rgba(196, 78, 67, 0.34)";
+  ctx.lineWidth = curbHalfWidth * 2 - 6;
+  strokeCircuitPath(track.path);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.strokeStyle = TRACK_PALETTE.road;
+  ctx.lineWidth = track.roadHalfWidth * 2;
+  strokeCircuitPath(track.path);
+  ctx.stroke();
 
   ctx.strokeStyle = "rgba(238, 243, 236, 0.22)";
   ctx.lineWidth = ROAD_MARKING.widthM * PX_PER_METER;
   ctx.setLineDash([ROAD_MARKING.dashM * PX_PER_METER, ROAD_MARKING.gapM * PX_PER_METER]);
-  drawEllipse(track.centerX, track.centerY, (track.outerRx + track.innerRx) / 2, (track.outerRy + track.innerRy) / 2);
+  strokeCircuitPath(track.path);
   ctx.stroke();
   ctx.setLineDash([]);
 
-  ctx.strokeStyle = "rgba(238, 243, 236, 0.24)";
-  ctx.lineWidth = ROAD_MARKING.widthM * PX_PER_METER;
-  drawEllipse(track.centerX, track.centerY, track.outerRx - 24, track.outerRy - 24);
-  ctx.stroke();
-  drawEllipse(track.centerX, track.centerY, track.innerRx + 24, track.innerRy + 24);
-  ctx.stroke();
+  ctx.restore();
 
   drawCircuitStartMarker();
 }
 
 function drawCircuitStartMarker() {
   const track = TRACKS.circuit;
+  const startAngle = getPathSegmentAngle(track.path, 0);
   const stripeCount = 8;
-  const stripeWidth = 2 * PX_PER_METER;
-  const stripeHeight = 7 * PX_PER_METER / stripeCount;
-  const x = track.startX - stripeWidth / 2;
-  const y = track.startY - stripeHeight * stripeCount / 2;
+  const lineLength = track.roadHalfWidth * 2;
+  const stripeWidth = lineLength / stripeCount;
+  const stripeHeight = 2 * PX_PER_METER;
 
+  ctx.save();
+  ctx.translate(track.startX, track.startY);
+  ctx.rotate(startAngle + Math.PI / 2);
   for (let i = 0; i < stripeCount; i += 1) {
     ctx.fillStyle = i % 2 === 0 ? "#f0efe5" : "#111514";
-    ctx.fillRect(x, y + i * stripeHeight, stripeWidth, stripeHeight);
+    ctx.fillRect(-lineLength / 2 + i * stripeWidth, -stripeHeight / 2, stripeWidth, stripeHeight);
   }
+  ctx.restore();
+}
+
+function getPathSegmentAngle(points, index) {
+  const current = points[index % points.length];
+  const next = points[(index + 1) % points.length];
+
+  return Math.atan2(next[1] - current[1], next[0] - current[0]);
+}
+
+function buildSmoothedCircuitSamples(points, stepsPerCurve) {
+  const first = points[0];
+  const samples = [[first[0], first[1]]];
+  let fromX = first[0];
+  let fromY = first[1];
+
+  for (let i = 0; i < points.length; i += 1) {
+    const current = points[i];
+    const next = points[(i + 1) % points.length];
+    const controlX = current[0];
+    const controlY = current[1];
+    const toX = (current[0] + next[0]) / 2;
+    const toY = (current[1] + next[1]) / 2;
+
+    for (let step = 1; step <= stepsPerCurve; step += 1) {
+      const t = step / stepsPerCurve;
+      const inverse = 1 - t;
+      const x = inverse * inverse * fromX + 2 * inverse * t * controlX + t * t * toX;
+      const y = inverse * inverse * fromY + 2 * inverse * t * controlY + t * t * toY;
+      samples.push([x, y]);
+    }
+
+    fromX = toX;
+    fromY = toY;
+  }
+
+  return samples;
+}
+
+function strokeCircuitPath(points) {
+  const first = points[0];
+  ctx.beginPath();
+  ctx.moveTo(first[0], first[1]);
+
+  for (let i = 0; i < points.length; i += 1) {
+    const current = points[i];
+    const next = points[(i + 1) % points.length];
+    const midX = (current[0] + next[0]) / 2;
+    const midY = (current[1] + next[1]) / 2;
+    ctx.quadraticCurveTo(current[0], current[1], midX, midY);
+  }
+
+  ctx.closePath();
 }
 
 function drawStartMarker() {
@@ -550,11 +708,53 @@ function resolveBounds() {
   }
 }
 
+function resolveTrackFence() {
+  const track = TRACKS.circuit;
+  const sample = getTrackSample(car.x, car.y);
+  const fenceLimit = track.roadHalfWidth + track.curbWidth + track.grassWidth + track.fencePadding - car.radius * 0.35;
+
+  if (sample.distance <= fenceLimit) {
+    return;
+  }
+
+  const push = sample.distance - fenceLimit;
+  car.x -= sample.normal.x * push;
+  car.y -= sample.normal.y * push;
+
+  const outwardSpeed = dot(car.vx, car.vy, sample.normal.x, sample.normal.y);
+  if (outwardSpeed > 0) {
+    const incomingSpeed = Math.hypot(car.vx, car.vy);
+    const travelX = incomingSpeed > 0.001 ? car.vx / incomingSpeed : 0;
+    const travelY = incomingSpeed > 0.001 ? car.vy / incomingSpeed : 0;
+    const tangentProjection = dot(travelX, travelY, sample.tangent.x, sample.tangent.y);
+    const normalProjection = dot(travelX, travelY, sample.normal.x, sample.normal.y);
+    const reflectedX = travelX - 2 * normalProjection * sample.normal.x;
+    const reflectedY = travelY - 2 * normalProjection * sample.normal.y;
+    const reflectedLength = Math.hypot(reflectedX, reflectedY) || 1;
+    const retainedSpeed = incomingSpeed * Math.abs(tangentProjection);
+
+    car.vx = reflectedX / reflectedLength * retainedSpeed;
+    car.vy = reflectedY / reflectedLength * retainedSpeed;
+    driftAmount *= FENCE_COLLISION.driftKeep;
+
+    const collisionAngle = Math.atan2(reflectedY, reflectedX);
+    car.moveAngleRad = collisionAngle;
+    car.bodyAngleRad = collisionAngle;
+    car.angle = collisionAngle;
+  }
+}
+
 function updateCamera(dt) {
-  const baseZoom = clamp(Math.min(view.width / 1040, view.height / 560), 0.7, 1);
+  const minZoom = activeTrackId === "circuit" ? 0.42 : 0.7;
+  const maxZoom = activeTrackId === "circuit" ? 0.7 : 1;
+  const baseZoom = clamp(Math.min(view.width / 1040, view.height / 560), minZoom, maxZoom);
   const lookAhead = angleVector(car.bodyAngleRad);
-  const targetX = car.x + lookAhead.x * 22;
-  const targetY = car.y + lookAhead.y * 8;
+  const unclampedTargetX = car.x + lookAhead.x * 22;
+  const unclampedTargetY = car.y + lookAhead.y * 8;
+  const halfViewW = view.width / 2 / baseZoom;
+  const halfViewH = view.height / 2 / baseZoom;
+  const targetX = clamp(unclampedTargetX, halfViewW, WORLD.width - halfViewW);
+  const targetY = clamp(unclampedTargetY, halfViewH, WORLD.height - halfViewH);
 
   camera.zoom += (baseZoom - camera.zoom) * Math.min(1, dt * 2);
   camera.x += (targetX - camera.x) * Math.min(1, dt * 4);
@@ -571,6 +771,7 @@ function updateHud() {
   driftEl.textContent = `${Math.round(driftAmount * 100)}%`;
   yawEl.textContent = String(Math.round(yawRateDegS));
   radiusEl.textContent = turnRadiusM >= TURN_RADIUS_MAX_M ? "--" : String(Math.round(turnRadiusM));
+  surfaceEl.textContent = currentSurface.label;
 }
 
 function setTrack(trackId) {
@@ -610,6 +811,8 @@ function resetCar() {
   yawRateDegS = 0;
   turnRadiusM = TURN_RADIUS_MAX_M;
   skidMarks.length = 0;
+  currentSurface = getSurfaceAt(car.x, car.y);
+  previousSurface = currentSurface;
   camera.x = car.x;
   camera.y = car.y;
 }
@@ -979,6 +1182,66 @@ function getTireTrailIntensity(slideAmount, brakingForward, speedKmh) {
   return Math.max(slideAmount, brakeTrail);
 }
 
+function getSurfaceAt(x, y) {
+  if (activeTrackId !== "circuit") {
+    return SURFACE.road;
+  }
+
+  const track = TRACKS.circuit;
+  const sample = getTrackSample(x, y);
+
+  if (sample.distance <= track.roadHalfWidth) {
+    return SURFACE.road;
+  }
+
+  if (sample.distance <= track.roadHalfWidth + track.curbWidth) {
+    return SURFACE.curb;
+  }
+
+  return SURFACE.grass;
+}
+
+function getTrackSample(x, y) {
+  const path = TRACKS.circuit.collisionPath ?? TRACKS.circuit.path;
+  let best = null;
+
+  for (let i = 0; i < path.length; i += 1) {
+    const a = path[i];
+    const b = path[(i + 1) % path.length];
+    const sample = getSegmentSample(x, y, a, b);
+
+    if (!best || sample.distanceSq < best.distanceSq) {
+      best = sample;
+    }
+  }
+
+  return best;
+}
+
+function getSegmentSample(x, y, a, b) {
+  const ax = a[0];
+  const ay = a[1];
+  const bx = b[0];
+  const by = b[1];
+  const dx = bx - ax;
+  const dy = by - ay;
+  const lengthSq = dx * dx + dy * dy;
+  const ratio = lengthSq > 0 ? clamp(((x - ax) * dx + (y - ay) * dy) / lengthSq, 0, 1) : 0;
+  const px = ax + dx * ratio;
+  const py = ay + dy * ratio;
+  const nx = x - px;
+  const ny = y - py;
+  const distanceSq = nx * nx + ny * ny;
+  const distance = Math.sqrt(distanceSq);
+  const normal = distance > 0.0001
+    ? { x: nx / distance, y: ny / distance }
+    : { x: -dy / Math.sqrt(lengthSq || 1), y: dx / Math.sqrt(lengthSq || 1) };
+  const segmentLength = Math.sqrt(lengthSq || 1);
+  const tangent = { x: dx / segmentLength, y: dy / segmentLength };
+
+  return { x: px, y: py, normal, tangent, distance, distanceSq };
+}
+
 function getTurnRadiusM(speedAbsKmh, yawRate) {
   const yawRateRadS = Math.abs(degToRad(yawRate));
 
@@ -1062,6 +1325,14 @@ function applyIdleCoast(forwardSpeed, maxSpeed, dt) {
   const nextSpeed = Math.max(0, speed - (rollingLoss + dragLoss) * dt);
 
   return Math.sign(forwardSpeed) * nextSpeed;
+}
+
+function applySurfaceEntrySpeedDrop(forwardSpeed, fromSurface, toSurface) {
+  if (forwardSpeed === 0 || toSurface.speedDropScale >= fromSurface.speedDropScale) {
+    return forwardSpeed;
+  }
+
+  return forwardSpeed * toSurface.speedDropScale;
 }
 
 function applyTurnAndSlideSpeedLoss(forwardSpeed, steerAmount, slideAmount, throttle, dt) {

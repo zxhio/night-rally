@@ -5,14 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Night Rally</title>
     <link rel="stylesheet" href="src/styles.css" />
-    <script src="src/main.js?v=20260531-turn-sustain-2" defer></script>
+    <script src="src/main.js?v=20260601-turn-loss-drift-threshold" defer></script>
   </head>
   <body>
     <main class="game-shell">
       <canvas id="game" aria-label="Night Rally driving prototype"></canvas>
       <div class="track-switch" aria-label="Track selection">
-        <button class="track-button is-active" type="button" data-track="straight">Straight</button>
-        <button class="track-button" type="button" data-track="circuit">Circuit</button>
+        <button class="track-button is-active" type="button" data-track="circuit">Circuit</button>
+        <button class="track-button" type="button" data-track="straight">Straight</button>
       </div>
       <section class="hud" aria-live="polite">
         <div class="metric">
@@ -50,6 +50,10 @@
         <div class="metric">
           <span>Radius (m)</span>
           <strong id="radius">--</strong>
+        </div>
+        <div class="metric">
+          <span>Surface</span>
+          <strong id="surface">Road</strong>
         </div>
       </section>
     </main>

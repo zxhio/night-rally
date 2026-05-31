@@ -6,7 +6,7 @@
 
 纵向速度仍由 `specs/longitudinal-speed.md` 的数据曲线决定；横向模型只决定车头朝向、实际行进方向、侧滑强度和漂移轨迹。
 
-当前 baseline 车辆使用模拟数据，最高速度先限制在 120 km/h。主动侧滑从 70 km/h 以上开始更合理，低速和微调方向应主要表现为抓地转向和轻微车尾摆动。
+当前 baseline 车辆使用模拟数据，最高速度先限制在 160 km/h。主动侧滑从 80 km/h 以上开始更合理，低速和微调方向应主要表现为抓地转向和轻微车尾摆动。
 
 不复刻 K-Rally 的名称、素材、赛道或 UI，只借鉴高层手感目标：快速响应、低速能转、高速可控、甩尾可维持、反打能救。
 
@@ -35,7 +35,7 @@ handling.tires.slip_max_deg           视为满侧滑的滑移角, deg
 handling.slide.build                  侧滑强度建立速度, 1/s
 handling.slide.release                侧滑强度释放速度, 1/s
 handling.slide.steer_at               进入主动侧滑的转向输入阈值, 0..1
-handling.slide.min_kmh                主动侧滑开始速度, km/h，当前 120 封顶 baseline 使用 70
+handling.slide.min_kmh                主动侧滑开始速度, km/h，当前 160 封顶 baseline 使用 80
 handling.slide.hold_kmh               已经进入侧滑后的最低维持速度, km/h
 handling.slide.full_kmh               主动侧滑完全生效速度, km/h
 handling.slide.brake_bonus            刹车带来的额外侧滑目标, 0..1
@@ -351,6 +351,35 @@ emitDriftTrail =
 
 线段方向使用 `moveAngleRadNext`，位置使用车身后轴两侧。漂移轨迹只做可视化，不参与车辆运动。
 
+## 赛道地表
+
+默认弯道地图使用原创封闭赛道，不复刻真实赛道；节奏参考技术型 16 弯赛道：长直道、发卡、连续中低速弯和回头弯。当前中心线长度目标约 3200 m。
+
+赛道按车辆到中心线的距离分层：
+
+```txt
+road   沥青主路面，正常抓地和速度上限
+curb   可借路肩，进入时速度降到 95%，加速能力为 100%，并轻微降低转向效率
+grass  草坪缓冲区，进入时速度降到 90%，加速能力为 80%，并降低转向效率
+fence  草坪外侧栅栏，限制车辆离开赛道区域
+```
+
+地表影响分两段：进入低抓地地表时做一次速度比例缩减；停留在地表上时降低油门加速能力。地表不改变刹车减速能力。车辆回到主路面后，加速能力恢复到 100%，油门可以重新把速度拉上来：
+
+```txt
+steerInputNext =
+  inputSteer * surface.steer
+
+if surface.speedDropScale < previousSurface.speedDropScale:
+  speedAfterSurfaceEnter =
+    speedBeforeInput * surface.speedDropScale
+
+throttleScale =
+  throttleScale * surface.accelScale
+```
+
+重刹痕迹只在前进速度为正且按刹车时触发；倒车不会产生刹车痕迹。
+
 ## 边界
 
 ```txt
@@ -360,4 +389,5 @@ followRate < 0          => 非法车辆数据
 slide.throttle_keep     => clamp 到 0..1
 slideTarget             => clamp 到 0..1
 turnRadiusM             => HUD 上限显示为 --
+fence collision         => 使用加密平滑中心线检测，推回赛道区域，碰撞后方向按栅栏切线镜面反射，速度按 speedBefore * cos(collisionAngle) 投影保留
 ```
