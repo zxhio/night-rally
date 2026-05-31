@@ -26,12 +26,44 @@ body {
   height: 100%;
 }
 
+.track-switch {
+  position: absolute;
+  right: 16px;
+  top: 16px;
+  display: flex;
+  gap: 8px;
+  padding: 4px;
+  border: 1px solid rgba(238, 243, 236, 0.16);
+  border-radius: 6px;
+  background: rgba(12, 15, 14, 0.7);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.22);
+  backdrop-filter: blur(10px);
+}
+
+.track-button {
+  min-width: 72px;
+  height: 32px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: rgba(238, 243, 236, 0.72);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.track-button.is-active {
+  background: #eef3ec;
+  color: #101312;
+}
+
 .hud {
   position: absolute;
   top: 16px;
   left: 16px;
   display: grid;
-  grid-template-columns: repeat(4, max-content);
+  grid-template-columns: repeat(5, max-content);
   align-items: center;
   gap: 8px;
   max-width: calc(100vw - 32px);
@@ -69,8 +101,15 @@ body {
 }
 
 @media (max-width: 640px) {
+  .track-switch {
+    left: 16px;
+    right: auto;
+    top: auto;
+    bottom: 16px;
+  }
+
   .hud {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     right: 16px;
   }
 

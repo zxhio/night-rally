@@ -1,15 +1,8 @@
-const VEHICLE_DATA_URL = "data/cars/lynkco-03-plus-2019.json";
+const VEHICLE_DATA_URL = "data/cars/baseline.json";
 
 const DEFAULT_TUNING = {
   reverseAccelerationScale: 0.5,
   reverseMaxSpeedKmh: 60,
-  turnRate: 2.05,
-  steerBuildRate: 4.2,
-  steerReleaseRate: 7.5,
-  grip: 9.2,
-  driftGrip: 2.9,
-  driftThrottlePower: 0.35,
-  driftSpeedLoss: 1.8,
   drag: 0.035,
   rollingResistanceFloor: 0.7,
   wallBounce: 0.28,
@@ -23,10 +16,35 @@ const ROAD_MARKING = {
   edgeOffsetM: 2.8,
 };
 
+const TRACKS = {
+  straight: {
+    name: "Straight",
+    width: 12000,
+    height: 900,
+    startX: 260,
+    startY: 450,
+    startAngle: 0,
+  },
+  circuit: {
+    name: "Circuit",
+    width: 1800,
+    height: 1200,
+    startX: 360,
+    startY: 880,
+    startAngle: 0,
+    centerX: 900,
+    centerY: 600,
+    outerRx: 660,
+    outerRy: 420,
+    innerRx: 390,
+    innerRy: 205,
+  },
+};
+
 const WORLD = {
-  width: 12000,
-  height: 900,
-  runwayY: 450,
+  width: TRACKS.straight.width,
+  height: TRACKS.straight.height,
+  runwayY: TRACKS.straight.startY,
   runwayWidth: 14 * PX_PER_METER,
   margin: 44,
 };
@@ -36,6 +54,10 @@ const SPEED_SCALE = KMH_PER_GAME_SPEED * PX_PER_METER / 3.6;
 const METERS_PER_PIXEL = 1 / PX_PER_METER;
 const STANDARD_G = 9.80665;
 const SKID_MARKS_MAX = 420;
+const DRIFT_TRAIL_MIN_AMOUNT = 0.08;
+const DRIFT_TRAIL_MIN_KMH = 20;
+const DRIFT_TRAIL_FADE = 0.996;
+const TURN_RADIUS_MAX_M = 999;
 
 let vehicleModel = null;
 let TUNING = null;
@@ -49,6 +71,12 @@ const speedEl = document.querySelector("#speed");
 const accelEl = document.querySelector("#accel");
 const timeEl = document.querySelector("#time");
 const distanceEl = document.querySelector("#distance");
+const steerEl = document.querySelector("#steer");
+const slipEl = document.querySelector("#slip");
+const driftEl = document.querySelector("#drift");
+const yawEl = document.querySelector("#yaw");
+const radiusEl = document.querySelector("#radius");
+const trackButtons = [...document.querySelectorAll("[data-track]")];
 
 const keys = new Set();
 const view = { width: 0, height: 0, dpr: 1 };
@@ -57,6 +85,8 @@ const car = {
   x: 260,
   y: WORLD.runwayY,
   angle: 0,
+  bodyAngleRad: 0,
+  moveAngleRad: 0,
   vx: 0,
   vy: 0,
   radius: 0,
@@ -70,6 +100,11 @@ let testDistance = 0;
 let testActive = false;
 let lastSpeedKmh = 0;
 let accelG = 0;
+let driftActive = false;
+let slipDeg = 0;
+let yawRateDegS = 0;
+let turnRadiusM = TURN_RADIUS_MAX_M;
+let activeTrackId = "straight";
 const skidMarks = [];
 
 window.addEventListener("keydown", (event) => {
@@ -78,11 +113,25 @@ window.addEventListener("keydown", (event) => {
   if (event.code === "KeyR") {
     resetCar();
   }
+
+  if (event.code === "Digit1") {
+    setTrack("straight");
+  }
+
+  if (event.code === "Digit2") {
+    setTrack("circuit");
+  }
 });
 
 window.addEventListener("keyup", (event) => {
   keys.delete(event.code);
 });
+
+for (const button of trackButtons) {
+  button.addEventListener("click", () => {
+    setTrack(button.dataset.track);
+  });
+}
 
 window.addEventListener("resize", resize);
 resize();
@@ -116,24 +165,18 @@ function update(dt) {
   input.steer = steeringInput;
   const maxSpeedPx = toPixels(TUNING.maxSpeed);
   const reverseMaxSpeedPx = toPixels(TUNING.reverseMaxSpeed);
-  const facing = angleVector(car.angle);
-  const facingSpeed = dot(car.vx, car.vy, facing.x, facing.y);
-  const speedRatio = clamp(Math.abs(facingSpeed) / maxSpeedPx, 0, 1);
-  const steerPower = clamp(Math.abs(facingSpeed) / 190, 0.16, 1) * (1 - speedRatio * 0.34);
-  const reverseTurn = facingSpeed < -8 ? -1 : 1;
-  car.angle += input.steer * TUNING.turnRate * steerPower * reverseTurn * dt;
-
-  const forward = angleVector(car.angle);
-  const right = { x: -forward.y, y: forward.x };
-  let forwardSpeed = dot(car.vx, car.vy, forward.x, forward.y);
-  let sideSpeed = dot(car.vx, car.vy, right.x, right.y);
-  const preThrottleDrift = getDriftState(input, forwardSpeed, sideSpeed, speedRatio);
+  let forward = angleVector(car.bodyAngleRad);
+  let right = { x: -forward.y, y: forward.x };
+  const travel = angleVector(car.moveAngleRad);
+  let forwardSpeed = dot(car.vx, car.vy, travel.x, travel.y);
+  const speedBeforeInput = forwardSpeed;
+  const previousDriftAmount = driftAmount;
 
   if (input.throttle > 0) {
     if (forwardSpeed < 0) {
       forwardSpeed = applyBrake(forwardSpeed, dt);
     } else {
-      const throttleScale = 1 - preThrottleDrift.amount * (1 - TUNING.driftThrottlePower);
+      const throttleScale = 1 - previousDriftAmount * (1 - TUNING.slideThrottleKeep);
       forwardSpeed = applyThrottle(forwardSpeed, maxSpeedPx, throttleScale, dt);
     }
   }
@@ -150,15 +193,38 @@ function update(dt) {
     forwardSpeed = applyIdleCoast(forwardSpeed, maxSpeedPx, dt);
   }
 
-  const drift = getDriftState(input, forwardSpeed, sideSpeed, speedRatio);
-  const grip = drift.active ? TUNING.driftGrip : TUNING.grip;
-  sideSpeed *= Math.exp(-grip * dt);
-  forwardSpeed *= Math.exp(-TUNING.driftSpeedLoss * drift.amount * dt);
-
   forwardSpeed = clamp(forwardSpeed, -reverseMaxSpeedPx, maxSpeedPx);
 
-  car.vx = forward.x * forwardSpeed + right.x * sideSpeed;
-  car.vy = forward.y * forwardSpeed + right.y * sideSpeed;
+  const speedAbsKmh = Math.abs(toKmh(toGameSpeed(forwardSpeed)));
+  const slipBeforeDeg = signedSlipDeg();
+  const yawControl = getArcadeYawControl(input.steer, speedAbsKmh, slipBeforeDeg);
+  yawRateDegS = yawControl.yawRateDegS;
+  turnRadiusM = getTurnRadiusM(speedAbsKmh, yawRateDegS);
+  const reverseTurn = forwardSpeed < -0.1 ? -1 : 1;
+  car.bodyAngleRad += degToRad(yawRateDegS) * reverseTurn * dt;
+  car.angle = car.bodyAngleRad;
+
+  forward = angleVector(car.bodyAngleRad);
+  right = { x: -forward.y, y: forward.x };
+
+  const slideTarget = getSlideTarget(input, speedAbsKmh, slipBeforeDeg);
+  const slideRate = slideTarget > driftAmount ? TUNING.slideBuildRate : TUNING.slideReleaseRate;
+  driftAmount = expFollow(driftAmount, slideTarget, slideRate, dt);
+  driftActive = driftAmount > 0.04;
+  if (!driftActive) {
+    driftAmount = 0;
+  }
+  forwardSpeed = applyTurnAndSlideSpeedLoss(forwardSpeed, speedBeforeInput, Math.abs(input.steer), driftAmount, dt);
+
+  const counterSteer = Math.sign(input.steer) !== 0 && Math.sign(input.steer) === -Math.sign(slipBeforeDeg);
+  const recoveryGrip = counterSteer ? TUNING.counterSteerAssist * driftAmount + TUNING.recoverAssist : 0;
+  const noSteerGrip = Math.abs(input.steer) < 0.05 ? TUNING.straightenAssist * (1 - driftAmount) : 0;
+  const grip = lerp(TUNING.travelFollowRate, TUNING.slideFollowRate, driftAmount) + recoveryGrip + noSteerGrip;
+  const gripFollow = 1 - Math.exp(-grip * dt);
+  car.moveAngleRad += angleDelta(car.bodyAngleRad, car.moveAngleRad) * gripFollow;
+  const moveDirection = angleVector(car.moveAngleRad);
+  car.vx = moveDirection.x * forwardSpeed;
+  car.vy = moveDirection.y * forwardSpeed;
   car.x += car.vx * dt;
   car.y += car.vy * dt;
 
@@ -169,8 +235,8 @@ function update(dt) {
   updateAccelerationMeter(dt);
 
   resolveBounds();
-  driftAmount = drift.amount;
-  addSkidMarks(forward, right, driftAmount);
+  slipDeg = Math.abs(radToDeg(angleDelta(car.bodyAngleRad, car.moveAngleRad)));
+  addSkidMarks(forward, right, moveDirection, driftAmount, speedAbsKmh);
   updateCamera(dt);
   updateHud();
 }
@@ -184,7 +250,7 @@ function draw() {
   ctx.translate(-camera.x, -camera.y);
 
   drawWorld();
-  drawRunway();
+  drawTrack();
   drawSkidMarks();
   drawCarShadow();
   drawCar();
@@ -208,6 +274,15 @@ function drawWorld() {
   ctx.strokeStyle = "#111514";
   ctx.lineWidth = 24;
   ctx.strokeRect(12, 12, WORLD.width - 24, WORLD.height - 24);
+}
+
+function drawTrack() {
+  if (activeTrackId === "circuit") {
+    drawCircuit();
+    return;
+  }
+
+  drawRunway();
 }
 
 function drawRunway() {
@@ -242,6 +317,52 @@ function drawRunway() {
   drawStartMarker();
 }
 
+function drawCircuit() {
+  const track = TRACKS.circuit;
+
+  ctx.fillStyle = "#171c1c";
+  drawEllipse(track.centerX, track.centerY, track.outerRx + 34, track.outerRy + 34);
+  ctx.fill();
+
+  ctx.fillStyle = "#343a38";
+  drawEllipse(track.centerX, track.centerY, track.outerRx, track.outerRy);
+  ctx.fill();
+
+  ctx.fillStyle = "#26362d";
+  drawEllipse(track.centerX, track.centerY, track.innerRx, track.innerRy);
+  ctx.fill();
+
+  ctx.strokeStyle = "rgba(238, 243, 236, 0.22)";
+  ctx.lineWidth = ROAD_MARKING.widthM * PX_PER_METER;
+  ctx.setLineDash([ROAD_MARKING.dashM * PX_PER_METER, ROAD_MARKING.gapM * PX_PER_METER]);
+  drawEllipse(track.centerX, track.centerY, (track.outerRx + track.innerRx) / 2, (track.outerRy + track.innerRy) / 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.strokeStyle = "rgba(238, 243, 236, 0.24)";
+  ctx.lineWidth = ROAD_MARKING.widthM * PX_PER_METER;
+  drawEllipse(track.centerX, track.centerY, track.outerRx - 24, track.outerRy - 24);
+  ctx.stroke();
+  drawEllipse(track.centerX, track.centerY, track.innerRx + 24, track.innerRy + 24);
+  ctx.stroke();
+
+  drawCircuitStartMarker();
+}
+
+function drawCircuitStartMarker() {
+  const track = TRACKS.circuit;
+  const stripeCount = 8;
+  const stripeWidth = 2 * PX_PER_METER;
+  const stripeHeight = 7 * PX_PER_METER / stripeCount;
+  const x = track.startX - stripeWidth / 2;
+  const y = track.startY - stripeHeight * stripeCount / 2;
+
+  for (let i = 0; i < stripeCount; i += 1) {
+    ctx.fillStyle = i % 2 === 0 ? "#f0efe5" : "#111514";
+    ctx.fillRect(x, y + i * stripeHeight, stripeWidth, stripeHeight);
+  }
+}
+
 function drawStartMarker() {
   const x = 220;
   const y = WORLD.runwayY - WORLD.runwayWidth / 2;
@@ -261,7 +382,7 @@ function drawCarShadow() {
 
   ctx.save();
   ctx.translate(car.x + bodyLength * 0.12, car.y + bodyWidth * 0.28);
-  ctx.rotate(car.angle);
+  ctx.rotate(car.bodyAngleRad);
   ctx.fillStyle = "rgba(0, 0, 0, 0.3)";
   roundRect(-bodyLength / 2, -bodyWidth / 2, bodyLength, bodyWidth, 6);
   ctx.fill();
@@ -278,7 +399,7 @@ function drawCar() {
 
   ctx.save();
   ctx.translate(car.x, car.y);
-  ctx.rotate(car.angle);
+  ctx.rotate(car.bodyAngleRad);
 
   if (driftAmount > 0.1) {
     ctx.strokeStyle = `rgba(238, 243, 236, ${0.12 + driftAmount * 0.34})`;
@@ -315,8 +436,8 @@ function drawCar() {
   ctx.restore();
 }
 
-function addSkidMarks(forward, right, intensity) {
-  if (intensity <= 0.05) {
+function addSkidMarks(forward, right, moveDirection, intensity, speedKmh) {
+  if (intensity <= DRIFT_TRAIL_MIN_AMOUNT || speedKmh <= DRIFT_TRAIL_MIN_KMH) {
     return;
   }
 
@@ -331,16 +452,16 @@ function addSkidMarks(forward, right, intensity) {
     {
       x1: rearX + right.x * halfTrack,
       y1: rearY + right.y * halfTrack,
-      x2: rearX + right.x * halfTrack - forward.x * length,
-      y2: rearY + right.y * halfTrack - forward.y * length,
+      x2: rearX + right.x * halfTrack - moveDirection.x * length,
+      y2: rearY + right.y * halfTrack - moveDirection.y * length,
       alpha,
       life: 1,
     },
     {
       x1: rearX - right.x * halfTrack,
       y1: rearY - right.y * halfTrack,
-      x2: rearX - right.x * halfTrack - forward.x * length,
-      y2: rearY - right.y * halfTrack - forward.y * length,
+      x2: rearX - right.x * halfTrack - moveDirection.x * length,
+      y2: rearY - right.y * halfTrack - moveDirection.y * length,
       alpha,
       life: 1,
     },
@@ -362,7 +483,7 @@ function drawSkidMarks() {
     ctx.moveTo(mark.x1, mark.y1);
     ctx.lineTo(mark.x2, mark.y2);
     ctx.stroke();
-    mark.life *= 0.996;
+    mark.life *= DRIFT_TRAIL_FADE;
   }
 
   while (skidMarks.length > 0 && skidMarks[0].life < 0.08) {
@@ -375,10 +496,12 @@ function drawSkidMarks() {
 function readInput() {
   const up = keys.has("KeyW") || keys.has("ArrowUp");
   const down = keys.has("KeyS") || keys.has("ArrowDown");
+  const left = keys.has("KeyA") || keys.has("ArrowLeft");
+  const right = keys.has("KeyD") || keys.has("ArrowRight");
 
   return {
     throttle: Number(up) - Number(down),
-    steer: 0,
+    steer: Number(right) - Number(left),
   };
 }
 
@@ -423,7 +546,7 @@ function resolveBounds() {
 
 function updateCamera(dt) {
   const baseZoom = clamp(Math.min(view.width / 1040, view.height / 560), 0.7, 1);
-  const lookAhead = angleVector(car.angle);
+  const lookAhead = angleVector(car.bodyAngleRad);
   const targetX = car.x + lookAhead.x * 22;
   const targetY = car.y + lookAhead.y * 8;
 
@@ -437,12 +560,37 @@ function updateHud() {
   accelEl.textContent = formatAccelG(accelG);
   timeEl.textContent = testTime.toFixed(2);
   distanceEl.textContent = testDistance.toFixed(1);
+  steerEl.textContent = `${Math.round(steeringInput * 100)}%`;
+  slipEl.textContent = String(Math.round(slipDeg));
+  driftEl.textContent = `${Math.round(driftAmount * 100)}%`;
+  yawEl.textContent = String(Math.round(yawRateDegS));
+  radiusEl.textContent = turnRadiusM >= TURN_RADIUS_MAX_M ? "--" : String(Math.round(turnRadiusM));
+}
+
+function setTrack(trackId) {
+  if (!TRACKS[trackId] || trackId === activeTrackId) {
+    return;
+  }
+
+  activeTrackId = trackId;
+  WORLD.width = TRACKS[trackId].width;
+  WORLD.height = TRACKS[trackId].height;
+  WORLD.runwayY = TRACKS[trackId].startY;
+
+  for (const button of trackButtons) {
+    button.classList.toggle("is-active", button.dataset.track === trackId);
+  }
+
+  resetCar();
 }
 
 function resetCar() {
-  car.x = 260;
-  car.y = WORLD.runwayY;
-  car.angle = 0;
+  const track = TRACKS[activeTrackId];
+  car.x = track.startX;
+  car.y = track.startY;
+  car.angle = track.startAngle;
+  car.bodyAngleRad = track.startAngle;
+  car.moveAngleRad = track.startAngle;
   car.vx = 0;
   car.vy = 0;
   steeringInput = 0;
@@ -451,6 +599,10 @@ function resetCar() {
   testActive = false;
   lastSpeedKmh = 0;
   accelG = 0;
+  driftActive = false;
+  slipDeg = 0;
+  yawRateDegS = 0;
+  turnRadiusM = TURN_RADIUS_MAX_M;
   skidMarks.length = 0;
   camera.x = car.x;
   camera.y = car.y;
@@ -486,6 +638,7 @@ function applyVehicleModel(data) {
   vehicleModel = data;
   TUNING = {
     ...DEFAULT_TUNING,
+    ...readVehicleHandling(data.handling),
     maxSpeed: toGameSpeedFromKmh(readNumber(data.max, "max")),
     reverseMaxSpeed: toGameSpeedFromKmh(DEFAULT_TUNING.reverseMaxSpeedKmh),
     brakeG: Math.abs(getAverageBrakeG(data.brake)),
@@ -494,6 +647,52 @@ function applyVehicleModel(data) {
   VEHICLE_ACCEL_SEGMENTS = buildAccelerationSegments(data);
   VEHICLE_TAIL = readVehicleTail(data.tail);
   car.radius = CAR_SPEC.lengthM * PX_PER_METER * 0.55;
+}
+
+function readVehicleHandling(handling) {
+  const steer = handling?.steer;
+  const tires = handling?.tires;
+  const slide = handling?.slide;
+  const turn = handling?.turn;
+  const assist = handling?.assist;
+
+  if (handling?.mode !== "arcade_v2") {
+    throw new Error("vehicle handling.mode must be arcade_v2");
+  }
+
+  if (!steer || !tires || !slide || !turn || !assist) {
+    throw new Error("vehicle handling.steer, handling.tires, handling.slide, handling.turn and handling.assist are required");
+  }
+
+  return {
+    steerBuildRate: readNumber(steer.build, "handling.steer.build"),
+    steerReleaseRate: readNumber(steer.release, "handling.steer.release"),
+    steerSpeedLowKmh: readNumber(steer.speed_band?.low, "handling.steer.speed_band.low"),
+    steerSpeedMidKmh: readNumber(steer.speed_band?.mid, "handling.steer.speed_band.mid"),
+    steerSpeedHighKmh: readNumber(steer.speed_band?.high, "handling.steer.speed_band.high"),
+    yawLowDegS: readNumber(steer.yaw_deg_s?.low, "handling.steer.yaw_deg_s.low"),
+    yawMidDegS: readNumber(steer.yaw_deg_s?.mid, "handling.steer.yaw_deg_s.mid"),
+    yawHighDegS: readNumber(steer.yaw_deg_s?.high, "handling.steer.yaw_deg_s.high"),
+    lowSpeedSteerBoost: readNumber(steer.low_speed_boost, "handling.steer.low_speed_boost"),
+    travelFollowRate: readNumber(tires.follow, "handling.tires.follow"),
+    slideFollowRate: readNumber(tires.slide_follow, "handling.tires.slide_follow"),
+    slipSoftDeg: readNumber(tires.slip_soft_deg, "handling.tires.slip_soft_deg"),
+    slipMaxDeg: readNumber(tires.slip_max_deg, "handling.tires.slip_max_deg"),
+    slideBuildRate: readNumber(slide.build, "handling.slide.build"),
+    slideReleaseRate: readNumber(slide.release, "handling.slide.release"),
+    slideSteerAt: readNumber(slide.steer_at, "handling.slide.steer_at"),
+    slideMinKmh: readNumber(slide.min_kmh, "handling.slide.min_kmh"),
+    slideFullKmh: readNumber(slide.full_kmh, "handling.slide.full_kmh"),
+    slideBrakeBonus: readNumber(slide.brake_bonus, "handling.slide.brake_bonus"),
+    slideThrottleKeep: readNumber(slide.throttle_keep, "handling.slide.throttle_keep"),
+    slideDrag: readNumber(slide.drag, "handling.slide.drag"),
+    slideDecelKmhS: readNumber(slide.decel_kmh_s, "handling.slide.decel_kmh_s"),
+    turnDrag: readNumber(turn.drag, "handling.turn.drag"),
+    turnDecelKmhS: readNumber(turn.decel_kmh_s, "handling.turn.decel_kmh_s"),
+    counterSteerAssist: readNumber(assist.counter_steer, "handling.assist.counter_steer"),
+    recoverAssist: readNumber(assist.recover, "handling.assist.recover"),
+    straightenAssist: readNumber(assist.straighten, "handling.assist.straighten"),
+  };
 }
 
 function readVehicleDimensions(dim) {
@@ -685,6 +884,18 @@ function angleVector(angle) {
   return { x: Math.cos(angle), y: Math.sin(angle) };
 }
 
+function angleDelta(target, current) {
+  return Math.atan2(Math.sin(target - current), Math.cos(target - current));
+}
+
+function radToDeg(value) {
+  return value * 180 / Math.PI;
+}
+
+function degToRad(value) {
+  return value * Math.PI / 180;
+}
+
 function dot(ax, ay, bx, by) {
   return ax * bx + ay * by;
 }
@@ -705,18 +916,64 @@ function toGameSpeedFromKmh(kmh) {
   return kmh / KMH_PER_GAME_SPEED;
 }
 
-function getDriftState(input, forwardSpeed, sideSpeed, speedRatio) {
-  const steerAmount = Math.abs(input.steer);
-  const hardSteer = clamp((steerAmount - 0.72) / 0.28, 0, 1);
-  const driftThreshold = 42 + speedRatio * 88;
-  const turnLoad = hardSteer * Math.abs(forwardSpeed) * speedRatio;
-  const driftLoad = Math.abs(sideSpeed) + turnLoad * 0.42;
-  const amount = clamp((driftLoad - driftThreshold) / 95, 0, 1);
+function getArcadeYawControl(steer, speedAbsKmh, currentSlipDeg) {
+  const maxYawDegS = getMaxYawDegS(speedAbsKmh);
+  const lowSpeedBoost = lerp(TUNING.lowSpeedSteerBoost, 1, smoothstep(0, TUNING.steerSpeedLowKmh, speedAbsKmh));
+  const slipRecover = Math.sign(steer) !== 0 && Math.sign(steer) === -Math.sign(currentSlipDeg)
+    ? 1 + TUNING.counterSteerAssist * driftAmount
+    : 1;
+  const yawRateDegS = steer * maxYawDegS * lowSpeedBoost * slipRecover;
 
-  return {
-    active: driftLoad > driftThreshold,
-    amount,
-  };
+  return { yawRateDegS };
+}
+
+function getMaxYawDegS(speedAbsKmh) {
+  if (speedAbsKmh <= TUNING.steerSpeedLowKmh) {
+    const t = smoothstep(0, TUNING.steerSpeedLowKmh, speedAbsKmh);
+
+    return lerp(TUNING.yawLowDegS * 0.72, TUNING.yawLowDegS, t);
+  }
+
+  if (speedAbsKmh <= TUNING.steerSpeedMidKmh) {
+    const t = smoothstep(TUNING.steerSpeedLowKmh, TUNING.steerSpeedMidKmh, speedAbsKmh);
+
+    return lerp(TUNING.yawLowDegS, TUNING.yawMidDegS, t);
+  }
+
+  const t = smoothstep(TUNING.steerSpeedMidKmh, TUNING.steerSpeedHighKmh, speedAbsKmh);
+
+  return lerp(TUNING.yawMidDegS, TUNING.yawHighDegS, t);
+}
+
+function getSlideTarget(input, speedAbsKmh, currentSlipDeg) {
+  const steerAmount = Math.abs(input.steer);
+  const steerPressure = smoothstep(TUNING.slideSteerAt, 1, steerAmount);
+  const speedPressure = smoothstep(TUNING.slideMinKmh, TUNING.slideFullKmh, speedAbsKmh);
+  const slipPressure = smoothstep(TUNING.slipSoftDeg, TUNING.slipMaxDeg, Math.abs(currentSlipDeg));
+  const brakePressure = input.throttle < 0 ? TUNING.slideBrakeBonus : 0;
+  const counterSteer = Math.sign(input.steer) !== 0 && Math.sign(input.steer) === -Math.sign(currentSlipDeg);
+  const recovery = counterSteer ? TUNING.counterSteerAssist * driftAmount : 0;
+  const target = steerPressure * speedPressure + slipPressure * 0.55 + brakePressure - recovery;
+
+  return clamp(target, 0, 1);
+}
+
+function getTurnRadiusM(speedAbsKmh, yawRate) {
+  const yawRateRadS = Math.abs(degToRad(yawRate));
+
+  if (yawRateRadS < 0.001 || speedAbsKmh < 1) {
+    return TURN_RADIUS_MAX_M;
+  }
+
+  return clamp((speedAbsKmh / 3.6) / yawRateRadS, 0, TURN_RADIUS_MAX_M);
+}
+
+function signedSlipDeg() {
+  return radToDeg(angleDelta(car.bodyAngleRad, car.moveAngleRad));
+}
+
+function expFollow(current, target, rate, dt) {
+  return lerp(current, target, 1 - Math.exp(-rate * dt));
 }
 
 function updateAccelerationMeter(dt) {
@@ -724,7 +981,7 @@ function updateAccelerationMeter(dt) {
     return;
   }
 
-  const facing = angleVector(car.angle);
+  const facing = angleVector(car.bodyAngleRad);
   const forwardSpeed = dot(car.vx, car.vy, facing.x, facing.y);
   const absSpeedKmh = Math.abs(toKmh(toGameSpeed(forwardSpeed)));
   const driveG = ((absSpeedKmh - lastSpeedKmh) / 3.6 / dt) / 9.80665;
@@ -786,6 +1043,23 @@ function applyIdleCoast(forwardSpeed, maxSpeed, dt) {
   return Math.sign(forwardSpeed) * nextSpeed;
 }
 
+function applyTurnAndSlideSpeedLoss(forwardSpeed, speedBeforeInput, steerAmount, slideAmount, dt) {
+  const turnAmount = smoothstep(0.08, 1, steerAmount) * (1 - slideAmount);
+  if (turnAmount <= 0 && slideAmount <= 0) {
+    return forwardSpeed;
+  }
+
+  const sign = Math.sign(forwardSpeed) || Math.sign(speedBeforeInput) || 1;
+  const speed = Math.abs(forwardSpeed);
+  const inputSpeed = Math.abs(speedBeforeInput);
+  const drag = TUNING.turnDrag * turnAmount + TUNING.slideDrag * slideAmount;
+  const decelKmhS = TUNING.turnDecelKmhS * turnAmount + TUNING.slideDecelKmhS * slideAmount;
+  const dragSpeed = speed * Math.exp(-drag * dt);
+  const decelSpeed = Math.max(0, inputSpeed - toPixels(toGameSpeedFromKmh(decelKmhS)) * dt);
+
+  return sign * Math.min(dragSpeed, decelSpeed);
+}
+
 function getVehicleAcceleration(speedKmh) {
   const segment =
     VEHICLE_ACCEL_SEGMENTS.find(({ fromKmh, toKmh }) => speedKmh >= fromKmh && speedKmh < toKmh) ??
@@ -805,8 +1079,27 @@ function getVehicleTailScale(speedKmh) {
   return Math.max(VEHICLE_TAIL.minScale, 1 - progress);
 }
 
+function lerp(from, to, ratio) {
+  return from + (to - from) * ratio;
+}
+
+function smoothstep(edge0, edge1, value) {
+  if (edge0 === edge1) {
+    return value >= edge1 ? 1 : 0;
+  }
+
+  const t = clamp((value - edge0) / (edge1 - edge0), 0, 1);
+
+  return t * t * (3 - 2 * t);
+}
+
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function drawEllipse(x, y, radiusX, radiusY) {
+  ctx.beginPath();
+  ctx.ellipse(x, y, radiusX, radiusY, 0, 0, Math.PI * 2);
 }
 
 function roundRect(x, y, width, height, radius) {
