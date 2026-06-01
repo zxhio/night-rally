@@ -1,6 +1,8 @@
 const VEHICLE_DATA_URL = "data/cars/baseline.json?v=20260601-track-data";
 const TRACK_DATA_URL = "data/tracks/index.json?v=20260601-track-data";
 const TRACK_DATA_BASE_URL = "data/tracks/";
+const LEADERBOARD_STORAGE_KEY = "night-rally.leaderboard.v1";
+const LEADERBOARD_MAX_RECORDS_PER_TRACK = 50;
 
 const DEFAULT_TUNING = {
   reverseAccelerationScale: 0.5,
@@ -142,6 +144,7 @@ let lapReverseM = 0;
 let lapFinishCoastTime = 0;
 let lapFinishVx = 0;
 let lapFinishVy = 0;
+let finishRecorded = false;
 let hudUpdateAccumulator = HUD_UPDATE_INTERVAL_S;
 let thumbnailUpdateAccumulator = THUMBNAIL_UPDATE_INTERVAL_S;
 const skidMarks = [];
@@ -223,6 +226,7 @@ function update(dt) {
   if (!testActive && input.throttle > 0) {
     testActive = true;
   }
+  updateStraightStartMode(input);
 
   previousSurface = currentSurface;
   currentSurface = getSurfaceAt(car.x, car.y);
@@ -308,6 +312,7 @@ function update(dt) {
     resolveTrackFence();
   }
   updateLapMode(input, dt, frameDistanceM);
+  updateStraightFinishMode();
   slipDeg = Math.abs(radToDeg(angleDelta(car.bodyAngleRad, car.moveAngleRad)));
   const trailIntensity = getTireTrailIntensity(driftAmount, brakingForward, speedAbsKmh);
   addSkidMarks(forward, right, moveDirection, trailIntensity, speedAbsKmh);
@@ -575,6 +580,14 @@ function drawStartMarker(track) {
   const stripeHeight = WORLD.runwayWidth / stripeCount;
   const stripeWidth = 2 * PX_PER_METER;
 
+  drawRunwayMarker(x, y, stripeWidth, stripeHeight, stripeCount);
+
+  if (Number.isFinite(track.finishDistanceM)) {
+    drawRunwayMarker(track.startX + track.finishDistanceM * PX_PER_METER, y, stripeWidth, stripeHeight, stripeCount);
+  }
+}
+
+function drawRunwayMarker(x, y, stripeWidth, stripeHeight, stripeCount) {
   for (let i = 0; i < stripeCount; i += 1) {
     ctx.fillStyle = i % 2 === 0 ? "#f0efe5" : "#111514";
     ctx.fillRect(x, y + i * stripeHeight, stripeWidth, stripeHeight);
@@ -851,10 +864,34 @@ function updateLapMode(input, dt, frameDistanceM) {
 
   if (lapDistance >= track.lap.lengthM || crossedFinishLine) {
     lapDistance = track.lap.lengthM;
+    recordFinishTime(track, lapTime);
     startLapFinishCoast();
   }
 
   lapProgress = clamp(lapDistance / track.lap.lengthM, 0, 1);
+}
+
+function updateStraightFinishMode() {
+  const track = getActiveTrack();
+
+  if (!hasStraightFinish(track) || lapState !== LAP_STATE.running || !testActive) {
+    return;
+  }
+
+  if (testDistance >= track.finishDistanceM) {
+    recordFinishTime(track, testTime);
+    startLapFinishCoast();
+  }
+}
+
+function updateStraightStartMode(input) {
+  if (!hasStraightFinish() || lapState !== LAP_STATE.ready || input.throttle <= 0) {
+    return;
+  }
+
+  lapState = LAP_STATE.running;
+  testTime = 0;
+  testDistance = 0;
 }
 
 function holdFinishedLap(dt) {
@@ -997,7 +1034,7 @@ function updateHud(dt = HUD_UPDATE_INTERVAL_S, force = false) {
 }
 
 function getLapStateLabel() {
-  if (!hasLapTrack()) {
+  if (!hasLapTrack() && !hasStraightFinish()) {
     return "Test";
   }
 
@@ -1014,6 +1051,56 @@ function getLapStateLabel() {
   }
 
   return "Ready";
+}
+
+function recordFinishTime(track, timeS) {
+  if (finishRecorded || !Number.isFinite(timeS) || timeS <= 0) {
+    return;
+  }
+
+  finishRecorded = true;
+  saveLeaderboardRecord(track.id, {
+    trackId: track.id,
+    trackName: track.name,
+    timeS,
+    distanceM: hasLapTrack(track) ? track.lap.lengthM : track.finishDistanceM,
+    createdAt: new Date().toISOString(),
+  });
+}
+
+function saveLeaderboardRecord(trackId, record) {
+  const records = loadLeaderboardRecords();
+  const trackRecords = Array.isArray(records[trackId]) ? records[trackId] : [];
+
+  records[trackId] = [...trackRecords, record]
+    .filter(isValidLeaderboardRecord)
+    .sort((a, b) => a.timeS - b.timeS)
+    .slice(0, LEADERBOARD_MAX_RECORDS_PER_TRACK);
+
+  try {
+    localStorage.setItem(LEADERBOARD_STORAGE_KEY, JSON.stringify(records));
+  } catch (error) {
+    console.warn("Failed to save leaderboard", error);
+  }
+}
+
+function loadLeaderboardRecords() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(LEADERBOARD_STORAGE_KEY) ?? "{}");
+
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch (error) {
+    console.warn("Failed to load leaderboard", error);
+    return {};
+  }
+}
+
+function isValidLeaderboardRecord(record) {
+  return record
+    && typeof record === "object"
+    && Number.isFinite(record.timeS)
+    && record.timeS > 0
+    && typeof record.createdAt === "string";
 }
 
 function renderTrackSelector() {
@@ -1379,7 +1466,7 @@ function resetCar() {
 }
 
 function resetLapMode() {
-  lapState = hasLapTrack() ? LAP_STATE.ready : LAP_STATE.running;
+  lapState = hasLapTrack() || hasStraightFinish() ? LAP_STATE.ready : LAP_STATE.running;
   lapTime = 0;
   lapDistance = 0;
   lapProgress = 0;
@@ -1387,6 +1474,7 @@ function resetLapMode() {
   lapFinishCoastTime = 0;
   lapFinishVx = 0;
   lapFinishVy = 0;
+  finishRecorded = false;
   if (hasLapTrack()) {
     const sample = getTrackSample(car.x, car.y);
     lapLastProgressM = sample.progressPx * METERS_PER_PIXEL;
@@ -1493,6 +1581,9 @@ function normalizeTrack(rawTrack) {
     track.dirtSpecks = buildDirtSpecks(track);
   } else if (type === "straight") {
     track.runwayWidth = readTrackNumber(rawTrack.runwayWidthM ?? 14, `tracks.${id}.runwayWidthM`) * PX_PER_METER;
+    track.finishDistanceM = Number.isFinite(rawTrack.finishDistanceM)
+      ? readTrackNumber(rawTrack.finishDistanceM, `tracks.${id}.finishDistanceM`)
+      : null;
   } else {
     throw new Error(`unsupported track type ${type}`);
   }
@@ -1809,12 +1900,16 @@ function hasSurfaceTrack(track = getActiveTrack()) {
   return Boolean(track?.path && Number.isFinite(track.roadHalfWidth));
 }
 
+function hasStraightFinish(track = getActiveTrack()) {
+  return track?.type === "straight" && Number.isFinite(track.finishDistanceM);
+}
+
 function isSessionStarted() {
   if (!activeTrackId) {
     return false;
   }
 
-  if (hasLapTrack()) {
+  if (hasLapTrack() || hasStraightFinish()) {
     return lapState !== LAP_STATE.ready;
   }
 

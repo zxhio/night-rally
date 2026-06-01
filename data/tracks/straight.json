@@ -3,7 +3,7 @@
   "name": "3公里直道",
   "type": "straight",
   "world": {
-    "width": 30000,
+    "width": 30600,
     "height": 900
   },
   "start": {
@@ -12,6 +12,7 @@
     "angle": 0
   },
   "runwayWidthM": 14,
+  "finishDistanceM": 3000,
   "display": {
     "length": "3.0 km"
   }
