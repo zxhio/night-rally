@@ -341,16 +341,18 @@ function draw() {
 
 function drawWorld() {
   const track = getActiveTrack();
+  const visibleBounds = getVisibleWorldBounds();
+
   ctx.fillStyle = track.background ?? "#b78345";
   ctx.fillRect(0, 0, WORLD.width, WORLD.height);
 
   if (track.type === "circuit") {
-    drawDirtTexture(track);
+    drawDirtTexture(track, visibleBounds);
   }
 
   ctx.strokeStyle = "rgba(238, 243, 236, 0.04)";
   ctx.lineWidth = 1;
-  for (let x = 0; x <= WORLD.width; x += 100) {
+  for (let x = visibleBounds.minX; x <= visibleBounds.maxX; x += 100) {
     ctx.beginPath();
     ctx.moveTo(x, 0);
     ctx.lineTo(x, WORLD.height);
@@ -362,8 +364,29 @@ function drawWorld() {
   ctx.strokeRect(12, 12, WORLD.width - 24, WORLD.height - 24);
 }
 
-function drawDirtTexture(track) {
+function getVisibleWorldBounds(padding = 160) {
+  const halfWidth = view.width / 2 / camera.zoom;
+  const halfHeight = view.height / 2 / camera.zoom;
+
+  return {
+    minX: Math.max(0, Math.floor((camera.x - halfWidth - padding) / 100) * 100),
+    maxX: Math.min(WORLD.width, Math.ceil((camera.x + halfWidth + padding) / 100) * 100),
+    minY: Math.max(0, camera.y - halfHeight - padding),
+    maxY: Math.min(WORLD.height, camera.y + halfHeight + padding),
+  };
+}
+
+function drawDirtTexture(track, visibleBounds) {
   for (const speck of track.dirtSpecks) {
+    if (
+      speck.x < visibleBounds.minX
+      || speck.x > visibleBounds.maxX
+      || speck.y < visibleBounds.minY
+      || speck.y > visibleBounds.maxY
+    ) {
+      continue;
+    }
+
     ctx.fillStyle = `rgba(91, 59, 29, ${speck.a * 0.72})`;
     ctx.beginPath();
     ctx.arc(speck.x, speck.y, speck.r, 0, Math.PI * 2);

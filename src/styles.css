@@ -38,9 +38,8 @@ body {
   padding: 8px;
   border: 1px solid rgba(238, 243, 236, 0.16);
   border-radius: 6px;
-  background: rgba(12, 15, 14, 0.7);
+  background: rgba(12, 15, 14, 0.84);
   box-shadow: 0 10px 26px rgba(0, 0, 0, 0.22);
-  backdrop-filter: blur(10px);
 }
 
 .track-panel.is-compact {
@@ -206,9 +205,8 @@ body {
   min-height: 40px;
   border-radius: 6px;
   border: 1px solid rgba(238, 243, 236, 0.16);
-  background: rgba(12, 15, 14, 0.58);
+  background: rgba(12, 15, 14, 0.78);
   box-shadow: 0 10px 26px rgba(0, 0, 0, 0.22);
-  backdrop-filter: blur(10px);
 }
 
 .metric {
@@ -244,7 +242,7 @@ body {
   min-width: 96px;
   min-height: 50px;
   padding: 7px 12px;
-  background: rgba(12, 15, 14, 0.66);
+  background: rgba(12, 15, 14, 0.84);
 }
 
 .metric-primary span {
@@ -271,7 +269,7 @@ body {
   min-width: 78px;
   min-height: 34px;
   padding: 5px 9px;
-  background: rgba(12, 15, 14, 0.48);
+  background: rgba(12, 15, 14, 0.72);
 }
 
 .metric-secondary span {
