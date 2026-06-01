@@ -974,8 +974,8 @@ function correctLapReverse(track) {
 }
 
 function updateCamera(dt) {
-  const minZoom = activeTrackId === "circuit" ? 0.42 : 0.7;
-  const maxZoom = activeTrackId === "circuit" ? 0.7 : 1;
+  const minZoom = activeTrackId === "circuit" ? 0.48 : 0.7;
+  const maxZoom = activeTrackId === "circuit" ? 0.78 : 1;
   const baseZoom = clamp(Math.min(view.width / 1040, view.height / 560), minZoom, maxZoom);
   const lookAhead = angleVector(car.bodyAngleRad);
   const unclampedTargetX = car.x + lookAhead.x * 22;
