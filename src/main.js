@@ -1,4 +1,6 @@
-const VEHICLE_DATA_URL = "data/cars/baseline.json?v=20260601-stable-time-card";
+const VEHICLE_DATA_URL = "data/cars/baseline.json?v=20260601-track-data";
+const TRACK_DATA_URL = "data/tracks/index.json?v=20260601-track-data";
+const TRACK_DATA_BASE_URL = "data/tracks/";
 
 const DEFAULT_TUNING = {
   reverseAccelerationScale: 0.5,
@@ -16,84 +18,13 @@ const ROAD_MARKING = {
   edgeOffsetM: 2.8,
 };
 
-const CIRCUIT_PATH = [
-  [9716, 3615],
-  [9716, 2273],
-  [9605, 1527],
-  [9119, 1228],
-  [8634, 1489],
-  [8149, 1527],
-  [7701, 1414],
-  [7329, 1787],
-  [7403, 2346],
-  [7888, 2868],
-  [8298, 3316],
-  [8000, 3801],
-  [8560, 4175],
-  [9157, 4436],
-  [8970, 4958],
-  [8038, 5220],
-  [6881, 5145],
-  [6210, 4921],
-  [6060, 4287],
-  [6284, 3690],
-  [5874, 3353],
-  [5351, 3615],
-  [5166, 4137],
-  [4792, 4175],
-  [4530, 3690],
-  [4455, 2944],
-  [4083, 2682],
-  [3896, 2273],
-  [3000, 2346],
-  [1882, 2607],
-  [1173, 2832],
-  [1098, 3241],
-  [1882, 3391],
-  [3225, 3353],
-  [3934, 3540],
-  [4403, 4802],
-  [5216, 5703],
-  [6248, 5956],
-  [7552, 5816],
-  [8859, 6113],
-  [9828, 6039],
-  [10314, 5554],
-  [10051, 4584],
-];
-const CIRCUIT_COLLISION_PATH = buildSmoothedCircuitSamples(CIRCUIT_PATH, 16);
-const CIRCUIT_LAP = buildPathMetrics(CIRCUIT_COLLISION_PATH);
-
-const TRACKS = {
-  straight: {
-    name: "Straight",
-    width: 12000,
-    height: 900,
-    startX: 260,
-    startY: 450,
-    startAngle: 0,
-  },
-  circuit: {
-    name: "Circuit",
-    width: 10800,
-    height: 6800,
-    startX: 9716,
-    startY: 3615,
-    startAngle: getPathSegmentAngle(CIRCUIT_PATH, 0),
-    path: CIRCUIT_PATH,
-    collisionPath: CIRCUIT_COLLISION_PATH,
-    lap: CIRCUIT_LAP,
-    roadHalfWidth: 70,
-    curbWidth: 21,
-    grassWidth: 96,
-    fencePadding: 30,
-  },
-};
+let TRACKS = {};
+let TRACK_LIST = [];
 
 const WORLD = {
-  width: TRACKS.circuit.width,
-  height: TRACKS.circuit.height,
-  runwayY: TRACKS.circuit.startY,
+  width: 12000,
+  height: 900,
+  runwayY: 450,
   runwayWidth: 14 * PX_PER_METER,
   margin: 44,
 };
@@ -118,6 +49,8 @@ const LAP_STATE = {
   finished: "finished",
 };
 const LAP_PROGRESS_JUMP_BUFFER_M = 18;
+const LAP_FINISH_LINE_WINDOW_M = 90;
+const LAP_SAMPLE_WINDOW_SEGMENTS = 48;
 const LAP_REVERSE_CORRECT_M = 40;
 const LAP_REVERSE_CORRECT_AHEAD_M = 6;
 const LAP_FINISH_COAST_S = 2;
@@ -136,12 +69,6 @@ const TRACK_PALETTE = {
 const FENCE_COLLISION = {
   driftKeep: 0.25,
 };
-const DIRT_SPECKS = Array.from({ length: 180 }, (_, index) => ({
-  x: (index * 149 + 83) % TRACKS.circuit.width,
-  y: (index * 211 + 47) % TRACKS.circuit.height,
-  r: 1 + (index % 4) * 0.55,
-  a: 0.05 + (index % 5) * 0.018,
-}));
 
 let vehicleModel = null;
 let TUNING = null;
@@ -163,7 +90,7 @@ const radiusEl = document.querySelector("#radius");
 const surfaceEl = document.querySelector("#surface");
 const lapStateEl = document.querySelector("#lap-state");
 const lapProgressEl = document.querySelector("#lap-progress");
-const trackButtons = [...document.querySelectorAll("[data-track]")];
+const trackPanel = document.querySelector("#track-panel");
 
 const keys = new Set();
 const view = { width: 0, height: 0, dpr: 1 };
@@ -191,7 +118,10 @@ let driftActive = false;
 let slipDeg = 0;
 let yawRateDegS = 0;
 let turnRadiusM = TURN_RADIUS_MAX_M;
-let activeTrackId = "circuit";
+let activeTrackId = null;
+let selectedTrackId = null;
+let trackSelectionConfirmed = false;
+let trackSelectorState = "";
 let currentSurface = SURFACE.road;
 let previousSurface = SURFACE.road;
 let lapState = LAP_STATE.ready;
@@ -199,6 +129,7 @@ let lapTime = 0;
 let lapDistance = 0;
 let lapProgress = 0;
 let lapLastProgressM = 0;
+let lapLastSegmentIndex = 0;
 let lapReverseM = 0;
 let lapFinishCoastTime = 0;
 let lapFinishVx = 0;
@@ -206,43 +137,48 @@ let lapFinishVy = 0;
 const skidMarks = [];
 
 window.addEventListener("keydown", (event) => {
-  keys.add(event.code);
+  if (!activeTrackId) {
+    return;
+  }
 
   if (event.code === "KeyR") {
     resetCar();
+    openTrackSelection();
+    return;
   }
 
-  if (event.code === "Digit1") {
-    setTrack("circuit");
+  if (/^Digit[1-9]$/.test(event.code)) {
+    const track = TRACK_LIST[Number(event.code.slice(5)) - 1];
+    if (track) {
+      confirmTrackSelection(track.id);
+    }
+    return;
   }
 
-  if (event.code === "Digit2") {
-    setTrack("straight");
+  if (isTrackSelectionMode() && handleTrackSelectionKey(event)) {
+    return;
   }
+
+  keys.add(event.code);
 });
 
 window.addEventListener("keyup", (event) => {
   keys.delete(event.code);
 });
 
-for (const button of trackButtons) {
-  button.addEventListener("click", () => {
-    setTrack(button.dataset.track);
-  });
-}
-
 window.addEventListener("resize", resize);
 resize();
-drawStatus("Loading vehicle data...");
+drawStatus("Loading data...");
 
-loadVehicleModel(VEHICLE_DATA_URL)
-  .then((model) => {
+Promise.all([loadJson(VEHICLE_DATA_URL), loadTrackData(TRACK_DATA_URL)])
+  .then(([model, trackData]) => {
     applyVehicleModel(model);
+    applyTrackData(trackData);
     resetCar();
     lastTime = performance.now();
     requestAnimationFrame(loop);
   })
-  .catch(handleVehicleLoadError);
+  .catch(handleLoadError);
 
 function loop(now) {
   const dt = Math.min((now - lastTime) / 1000, 1 / 30);
@@ -254,13 +190,20 @@ function loop(now) {
 }
 
 function update(dt) {
+  if (isTrackSelectionMode()) {
+    steeringInput = updateSteeringInput(steeringInput, 0, dt);
+    updateCamera(dt);
+    updateHud();
+    return;
+  }
+
   const input = readInput();
-  if (lapState === LAP_STATE.finished && activeTrackId === "circuit") {
+  if (lapState === LAP_STATE.finished && hasLapTrack()) {
     holdFinishedLap(dt);
     return;
   }
 
-  if (lapState === LAP_STATE.finishing && activeTrackId === "circuit") {
+  if (lapState === LAP_STATE.finishing && hasLapTrack()) {
     updateFinishCoast(dt);
     return;
   }
@@ -349,7 +292,7 @@ function update(dt) {
   updateAccelerationMeter(dt);
 
   resolveBounds();
-  if (activeTrackId === "circuit") {
+  if (hasFenceTrack()) {
     resolveTrackFence();
   }
   updateLapMode(input, dt, frameDistanceM);
@@ -378,11 +321,12 @@ function draw() {
 }
 
 function drawWorld() {
-  ctx.fillStyle = activeTrackId === "circuit" ? "#b78345" : "#26362d";
+  const track = getActiveTrack();
+  ctx.fillStyle = track.background ?? "#b78345";
   ctx.fillRect(0, 0, WORLD.width, WORLD.height);
 
-  if (activeTrackId === "circuit") {
-    drawDirtTexture();
+  if (track.type === "circuit") {
+    drawDirtTexture(track);
   }
 
   ctx.strokeStyle = "rgba(238, 243, 236, 0.04)";
@@ -394,13 +338,13 @@ function drawWorld() {
     ctx.stroke();
   }
 
-  ctx.strokeStyle = activeTrackId === "circuit" ? "rgba(54, 41, 28, 0.42)" : "#111514";
+  ctx.strokeStyle = track.type === "circuit" ? "rgba(54, 41, 28, 0.42)" : "#111514";
   ctx.lineWidth = 24;
   ctx.strokeRect(12, 12, WORLD.width - 24, WORLD.height - 24);
 }
 
-function drawDirtTexture() {
-  for (const speck of DIRT_SPECKS) {
+function drawDirtTexture(track) {
+  for (const speck of track.dirtSpecks) {
     ctx.fillStyle = `rgba(91, 59, 29, ${speck.a * 0.72})`;
     ctx.beginPath();
     ctx.arc(speck.x, speck.y, speck.r, 0, Math.PI * 2);
@@ -409,15 +353,16 @@ function drawDirtTexture() {
 }
 
 function drawTrack() {
-  if (activeTrackId === "circuit") {
-    drawCircuit();
+  const track = getActiveTrack();
+  if (track.type === "circuit") {
+    drawCircuit(track);
     return;
   }
 
-  drawRunway();
+  drawRunway(track);
 }
 
-function drawRunway() {
+function drawRunway(track) {
   const y = WORLD.runwayY - WORLD.runwayWidth / 2;
 
   ctx.fillStyle = "#171c1c";
@@ -446,11 +391,10 @@ function drawRunway() {
   ctx.lineTo(WORLD.width - WORLD.margin - 18, y + WORLD.runwayWidth - ROAD_MARKING.edgeOffsetM * PX_PER_METER);
   ctx.stroke();
 
-  drawStartMarker();
+  drawStartMarker(track);
 }
 
-function drawCircuit() {
-  const track = TRACKS.circuit;
+function drawCircuit(track) {
   const grassHalfWidth = track.roadHalfWidth + track.curbWidth + track.grassWidth;
   const curbHalfWidth = track.roadHalfWidth + track.curbWidth;
 
@@ -489,11 +433,10 @@ function drawCircuit() {
 
   ctx.restore();
 
-  drawCircuitStartMarker();
+  drawCircuitStartMarker(track);
 }
 
-function drawCircuitStartMarker() {
-  const track = TRACKS.circuit;
+function drawCircuitStartMarker(track) {
   const startAngle = getPathSegmentAngle(track.path, 0);
   const stripeCount = 8;
   const lineLength = track.roadHalfWidth * 2;
@@ -606,8 +549,8 @@ function strokeCircuitPath(points) {
   ctx.closePath();
 }
 
-function drawStartMarker() {
-  const x = 220;
+function drawStartMarker(track) {
+  const x = track.startX - 4 * PX_PER_METER;
   const y = WORLD.runwayY - WORLD.runwayWidth / 2;
   const stripeCount = 8;
   const stripeHeight = WORLD.runwayWidth / stripeCount;
@@ -788,7 +731,7 @@ function resolveBounds() {
 }
 
 function resolveTrackFence() {
-  const track = TRACKS.circuit;
+  const track = getActiveTrack();
   const sample = getTrackSample(car.x, car.y);
   const fenceLimit = track.roadHalfWidth + track.curbWidth + track.grassWidth + track.fencePadding - car.radius * 0.35;
 
@@ -824,16 +767,17 @@ function resolveTrackFence() {
 }
 
 function updateLapMode(input, dt, frameDistanceM) {
-  if (activeTrackId !== "circuit") {
+  if (!hasLapTrack()) {
     return;
   }
 
-  const track = TRACKS.circuit;
-  const sample = getTrackSample(car.x, car.y);
+  const track = getActiveTrack();
+  const sample = getLapTrackSample(track, car.x, car.y);
   const sampleProgressM = sample.progressPx * METERS_PER_PIXEL;
 
   if (lapState === LAP_STATE.ready) {
     lapLastProgressM = sampleProgressM;
+    lapLastSegmentIndex = sample.segmentIndex;
     lapDistance = 0;
     lapProgress = 0;
 
@@ -859,12 +803,19 @@ function updateLapMode(input, dt, frameDistanceM) {
   }
 
   const maxProgressDeltaM = frameDistanceM + LAP_PROGRESS_JUMP_BUFFER_M;
+  const crossedFinishLine = lapDistance > track.lap.lengthM - LAP_FINISH_LINE_WINDOW_M
+    && lapLastProgressM > track.lap.lengthM - LAP_FINISH_LINE_WINDOW_M
+    && sampleProgressM < LAP_FINISH_LINE_WINDOW_M
+    && progressDeltaM > 0;
+
   if (progressDeltaM >= 0 && progressDeltaM <= maxProgressDeltaM) {
     lapDistance += progressDeltaM;
     lapLastProgressM = sampleProgressM;
+    lapLastSegmentIndex = sample.segmentIndex;
   } else if (progressDeltaM < 0 && Math.abs(progressDeltaM) <= maxProgressDeltaM) {
     lapReverseM += Math.abs(progressDeltaM);
     lapLastProgressM = sampleProgressM;
+    lapLastSegmentIndex = sample.segmentIndex;
   } else if (progressDeltaM > 0) {
     lapReverseM = Math.max(0, lapReverseM - progressDeltaM);
   }
@@ -874,7 +825,7 @@ function updateLapMode(input, dt, frameDistanceM) {
     return;
   }
 
-  if (lapDistance >= track.lap.lengthM) {
+  if (lapDistance >= track.lap.lengthM || crossedFinishLine) {
     lapDistance = track.lap.lengthM;
     startLapFinishCoast();
   }
@@ -922,7 +873,9 @@ function updateFinishCoast(dt) {
   car.x += car.vx * dt;
   car.y += car.vy * dt;
   resolveBounds();
-  resolveTrackFence();
+  if (hasFenceTrack()) {
+    resolveTrackFence();
+  }
   testDistance += Math.hypot(car.x - previousX, car.y - previousY) * METERS_PER_PIXEL;
   steeringInput = 0;
   driftAmount = 0;
@@ -974,8 +927,8 @@ function correctLapReverse(track) {
 }
 
 function updateCamera(dt) {
-  const minZoom = activeTrackId === "circuit" ? 0.48 : 0.7;
-  const maxZoom = activeTrackId === "circuit" ? 0.78 : 1;
+  const minZoom = isCircuitTrack() ? 0.48 : 0.7;
+  const maxZoom = isCircuitTrack() ? 0.78 : 1;
   const baseZoom = clamp(Math.min(view.width / 1040, view.height / 560), minZoom, maxZoom);
   const lookAhead = angleVector(car.bodyAngleRad);
   const unclampedTargetX = car.x + lookAhead.x * 22;
@@ -993,7 +946,7 @@ function updateCamera(dt) {
 function updateHud() {
   speedEl.textContent = String(Math.round(toKmh(toGameSpeed(Math.hypot(car.vx, car.vy)))));
   accelEl.textContent = formatAccelG(accelG);
-  timeEl.textContent = formatTime(activeTrackId === "circuit" ? lapTime : testTime);
+  timeEl.textContent = formatTime(hasLapTrack() ? lapTime : testTime);
   distanceEl.textContent = testDistance.toFixed(1);
   steerEl.textContent = `${Math.round(steeringInput * 100)}%`;
   slipEl.textContent = String(Math.round(slipDeg));
@@ -1003,10 +956,12 @@ function updateHud() {
   surfaceEl.textContent = currentSurface.label;
   lapStateEl.textContent = getLapStateLabel();
   lapProgressEl.textContent = `${Math.round(lapProgress * 100)}% lap`;
+  updateTrackSelector();
+  updateTrackThumbnails();
 }
 
 function getLapStateLabel() {
-  if (activeTrackId !== "circuit") {
+  if (!hasLapTrack()) {
     return "Test";
   }
 
@@ -1025,25 +980,295 @@ function getLapStateLabel() {
   return "Ready";
 }
 
+function renderTrackSelector() {
+  if (!trackPanel || TRACK_LIST.length === 0) {
+    return;
+  }
+
+  const compact = !isTrackSelectionMode();
+  const tracks = compact ? [getActiveTrack()] : TRACK_LIST;
+  trackPanel.classList.toggle("is-compact", compact);
+  trackPanel.replaceChildren();
+
+  if (!compact) {
+    const hint = document.createElement("div");
+    hint.className = "track-hint";
+    hint.textContent = "Up / Down select, Left / Right confirm";
+    trackPanel.append(hint);
+  }
+
+  for (const track of tracks) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "track-card";
+    button.dataset.track = track.id;
+    button.disabled = compact;
+    button.classList.toggle("is-active", track.id === activeTrackId);
+    button.classList.toggle("is-selected", track.id === selectedTrackId);
+    button.addEventListener("click", () => confirmTrackSelection(track.id));
+
+    const thumb = document.createElement("canvas");
+    thumb.className = "track-thumb";
+    thumb.dataset.track = track.id;
+    thumb.width = 184;
+    thumb.height = 110;
+    drawTrackThumbnail(thumb, track);
+
+    const meta = document.createElement("span");
+    meta.className = "track-meta";
+
+    const name = document.createElement("span");
+    name.className = "track-name";
+    name.textContent = track.name;
+
+    const length = document.createElement("span");
+    length.className = "track-length";
+    length.textContent = track.displayLength;
+
+    meta.append(name, length);
+    button.append(thumb, meta);
+    trackPanel.append(button);
+  }
+}
+
+function updateTrackSelector(force = false) {
+  if (!trackPanel || !activeTrackId) {
+    return;
+  }
+
+  const nextState = `${activeTrackId}:${selectedTrackId}:${isTrackSelectionMode() ? "select" : "compact"}`;
+  if (!force && nextState === trackSelectorState) {
+    return;
+  }
+
+  trackSelectorState = nextState;
+  renderTrackSelector();
+}
+
+function updateTrackThumbnails() {
+  if (!trackPanel) {
+    return;
+  }
+
+  for (const thumb of trackPanel.querySelectorAll(".track-thumb")) {
+    const track = TRACKS[thumb.dataset.track];
+    if (track) {
+      drawTrackThumbnail(thumb, track);
+    }
+  }
+}
+
+function isTrackSelectionMode() {
+  return !trackSelectionConfirmed && !isSessionStarted();
+}
+
+function openTrackSelection() {
+  trackSelectionConfirmed = false;
+  selectedTrackId = activeTrackId;
+  updateTrackSelector(true);
+}
+
+function confirmTrackSelection(trackId = selectedTrackId) {
+  if (!TRACKS[trackId] || isSessionStarted()) {
+    return;
+  }
+
+  keys.clear();
+
+  if (trackId !== activeTrackId) {
+    activeTrackId = trackId;
+    resetCar();
+  }
+
+  trackSelectionConfirmed = true;
+  selectedTrackId = trackId;
+  updateTrackSelector(true);
+}
+
+function handleTrackSelectionKey(event) {
+  if (event.code === "ArrowUp" || event.code === "KeyW") {
+    moveTrackSelection(-1);
+    return true;
+  }
+
+  if (event.code === "ArrowDown" || event.code === "KeyS") {
+    moveTrackSelection(1);
+    return true;
+  }
+
+  if (event.code === "ArrowLeft" || event.code === "ArrowRight" || event.code === "Enter" || event.code === "Space") {
+    confirmTrackSelection();
+    return true;
+  }
+
+  return false;
+}
+
+function moveTrackSelection(direction) {
+  const currentIndex = Math.max(0, TRACK_LIST.findIndex((track) => track.id === selectedTrackId));
+  const nextIndex = wrapIndex(currentIndex + direction, TRACK_LIST.length);
+  selectedTrackId = TRACK_LIST[nextIndex].id;
+  updateTrackSelector(true);
+}
+
+function drawTrackThumbnail(canvasEl, track) {
+  const thumbCtx = canvasEl.getContext("2d");
+  const width = canvasEl.width;
+  const height = canvasEl.height;
+
+  thumbCtx.clearRect(0, 0, width, height);
+  thumbCtx.fillStyle = track.background ?? "#b78345";
+  thumbCtx.fillRect(0, 0, width, height);
+
+  if (track.type === "circuit") {
+    drawCircuitThumbnail(thumbCtx, track, width, height);
+  } else {
+    drawStraightThumbnail(thumbCtx, width, height);
+  }
+
+  if (track.id === activeTrackId) {
+    drawThumbnailCarMarker(thumbCtx, track, width, height);
+  }
+}
+
+function drawCircuitThumbnail(thumbCtx, track, width, height) {
+  const toThumb = getThumbnailProjector(track, width, height);
+
+  strokeThumbnailPath(thumbCtx, track.path, toThumb, 18, TRACK_PALETTE.grassOuter);
+  strokeThumbnailPath(thumbCtx, track.path, toThumb, 12, TRACK_PALETTE.curbOuter);
+  strokeThumbnailPath(thumbCtx, track.path, toThumb, 8, TRACK_PALETTE.road);
+
+  const start = toThumb([track.startX, track.startY]);
+  thumbCtx.save();
+  thumbCtx.translate(start[0], start[1]);
+  thumbCtx.rotate(track.startAngle + Math.PI / 2);
+  thumbCtx.strokeStyle = "#f0efe5";
+  thumbCtx.lineWidth = 2;
+  thumbCtx.beginPath();
+  thumbCtx.moveTo(-7, 0);
+  thumbCtx.lineTo(7, 0);
+  thumbCtx.stroke();
+  thumbCtx.restore();
+}
+
+function drawThumbnailCarMarker(thumbCtx, track, width, height) {
+  const toThumb = getThumbnailProjector(track, width, height);
+  const [x, y] = toThumb([car.x, car.y]);
+  const markerSize = isTrackSelectionMode() ? 6 : 8;
+
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return;
+  }
+
+  thumbCtx.save();
+  thumbCtx.translate(x, y);
+  thumbCtx.rotate(car.bodyAngleRad);
+  thumbCtx.fillStyle = "#f04444";
+  thumbCtx.strokeStyle = "#f7eee8";
+  thumbCtx.lineWidth = 1.4;
+  thumbCtx.beginPath();
+  thumbCtx.moveTo(markerSize, 0);
+  thumbCtx.lineTo(-markerSize * 0.72, -markerSize * 0.58);
+  thumbCtx.lineTo(-markerSize * 0.42, 0);
+  thumbCtx.lineTo(-markerSize * 0.72, markerSize * 0.58);
+  thumbCtx.closePath();
+  thumbCtx.fill();
+  thumbCtx.stroke();
+  thumbCtx.restore();
+}
+
+function drawStraightThumbnail(thumbCtx, width, height) {
+  const roadY = height / 2;
+  thumbCtx.strokeStyle = "#343a38";
+  thumbCtx.lineCap = "round";
+  thumbCtx.lineWidth = 26;
+  thumbCtx.beginPath();
+  thumbCtx.moveTo(12, roadY);
+  thumbCtx.lineTo(width - 12, roadY);
+  thumbCtx.stroke();
+
+  thumbCtx.strokeStyle = "rgba(238, 243, 236, 0.28)";
+  thumbCtx.setLineDash([8, 8]);
+  thumbCtx.lineWidth = 2;
+  thumbCtx.beginPath();
+  thumbCtx.moveTo(18, roadY);
+  thumbCtx.lineTo(width - 18, roadY);
+  thumbCtx.stroke();
+  thumbCtx.setLineDash([]);
+}
+
+function strokeThumbnailPath(thumbCtx, points, transformPoint, lineWidth, color) {
+  const first = transformPoint(points[0]);
+  thumbCtx.save();
+  thumbCtx.lineJoin = "round";
+  thumbCtx.lineCap = "round";
+  thumbCtx.strokeStyle = color;
+  thumbCtx.lineWidth = lineWidth;
+  thumbCtx.beginPath();
+  thumbCtx.moveTo(first[0], first[1]);
+
+  for (let i = 0; i < points.length; i += 1) {
+    const current = transformPoint(points[i]);
+    const next = transformPoint(points[(i + 1) % points.length]);
+    const midX = (current[0] + next[0]) / 2;
+    const midY = (current[1] + next[1]) / 2;
+    thumbCtx.quadraticCurveTo(current[0], current[1], midX, midY);
+  }
+
+  thumbCtx.closePath();
+  thumbCtx.stroke();
+  thumbCtx.restore();
+}
+
+function getPathBounds(points) {
+  return points.reduce((bounds, point) => ({
+    minX: Math.min(bounds.minX, point[0]),
+    minY: Math.min(bounds.minY, point[1]),
+    maxX: Math.max(bounds.maxX, point[0]),
+    maxY: Math.max(bounds.maxY, point[1]),
+  }), {
+    minX: Infinity,
+    minY: Infinity,
+    maxX: -Infinity,
+    maxY: -Infinity,
+  });
+}
+
+function getThumbnailProjector(track, width, height) {
+  const bounds = track.type === "circuit" ? getPathBounds(track.path) : {
+    minX: 0,
+    minY: 0,
+    maxX: track.width,
+    maxY: track.height,
+  };
+  const padding = 14;
+  const scale = Math.min(
+    (width - padding * 2) / Math.max(1, bounds.maxX - bounds.minX),
+    (height - padding * 2) / Math.max(1, bounds.maxY - bounds.minY),
+  );
+  const offsetX = (width - (bounds.maxX - bounds.minX) * scale) / 2 - bounds.minX * scale;
+  const offsetY = (height - (bounds.maxY - bounds.minY) * scale) / 2 - bounds.minY * scale;
+
+  return ([x, y]) => [x * scale + offsetX, y * scale + offsetY];
+}
+
 function setTrack(trackId) {
+  if (isSessionStarted()) {
+    return;
+  }
+
   if (!TRACKS[trackId] || trackId === activeTrackId) {
     return;
   }
 
   activeTrackId = trackId;
-  WORLD.width = TRACKS[trackId].width;
-  WORLD.height = TRACKS[trackId].height;
-  WORLD.runwayY = TRACKS[trackId].startY;
-
-  for (const button of trackButtons) {
-    button.classList.toggle("is-active", button.dataset.track === trackId);
-  }
-
+  applyTrackToWorld(TRACKS[trackId]);
   resetCar();
 }
 
 function resetCar() {
   const track = TRACKS[activeTrackId];
+  applyTrackToWorld(track);
   car.x = track.startX;
   car.y = track.startY;
   car.angle = track.startAngle;
@@ -1067,10 +1292,11 @@ function resetCar() {
   resetLapMode();
   camera.x = car.x;
   camera.y = car.y;
+  updateTrackSelector(true);
 }
 
 function resetLapMode() {
-  lapState = activeTrackId === "circuit" ? LAP_STATE.ready : LAP_STATE.running;
+  lapState = hasLapTrack() ? LAP_STATE.ready : LAP_STATE.running;
   lapTime = 0;
   lapDistance = 0;
   lapProgress = 0;
@@ -1078,9 +1304,15 @@ function resetLapMode() {
   lapFinishCoastTime = 0;
   lapFinishVx = 0;
   lapFinishVy = 0;
-  lapLastProgressM = activeTrackId === "circuit"
-    ? getTrackSample(car.x, car.y).progressPx * METERS_PER_PIXEL
-    : 0;
+  if (hasLapTrack()) {
+    const sample = getTrackSample(car.x, car.y);
+    lapLastProgressM = sample.progressPx * METERS_PER_PIXEL;
+    lapLastSegmentIndex = sample.segmentIndex;
+  } else {
+    lapLastProgressM = 0;
+    lapLastSegmentIndex = 0;
+  }
+  updateTrackSelector(true);
 }
 
 function resize() {
@@ -1099,7 +1331,7 @@ function resize() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 
-async function loadVehicleModel(url) {
+async function loadJson(url) {
   const response = await fetch(url);
 
   if (!response.ok) {
@@ -1107,6 +1339,99 @@ async function loadVehicleModel(url) {
   }
 
   return response.json();
+}
+
+async function loadTrackData(indexUrl) {
+  const index = await loadJson(indexUrl);
+
+  if (!Array.isArray(index?.tracks) || index.tracks.length === 0) {
+    throw new Error("track index must define tracks");
+  }
+
+  const tracks = await Promise.all(index.tracks.map(async (entry, indexPosition) => {
+    const file = readString(entry.file, `track index tracks[${indexPosition}].file`);
+    const track = await loadJson(`${TRACK_DATA_BASE_URL}${file}?v=20260601-track-data`);
+
+    if (entry.id && track.id !== entry.id) {
+      throw new Error(`track index id ${entry.id} does not match ${track.id}`);
+    }
+
+    return track;
+  }));
+
+  return {
+    default: index.default,
+    tracks,
+  };
+}
+
+function applyTrackData(data) {
+  if (!Array.isArray(data?.tracks) || data.tracks.length === 0) {
+    throw new Error("track data must define tracks");
+  }
+
+  TRACK_LIST = data.tracks.map(normalizeTrack);
+  TRACKS = Object.fromEntries(TRACK_LIST.map((track) => [track.id, track]));
+  activeTrackId = TRACKS[data.default] ? data.default : TRACK_LIST[0].id;
+  selectedTrackId = activeTrackId;
+  trackSelectionConfirmed = false;
+  applyTrackToWorld(getActiveTrack());
+  renderTrackSelector();
+}
+
+function normalizeTrack(rawTrack) {
+  const id = readString(rawTrack.id, "track.id");
+  const type = readString(rawTrack.type, `tracks.${id}.type`);
+  const world = rawTrack.world ?? {};
+  const start = rawTrack.start ?? {};
+  const track = {
+    id,
+    type,
+    name: readString(rawTrack.name, `tracks.${id}.name`),
+    width: readTrackNumber(world.width, `tracks.${id}.world.width`),
+    height: readTrackNumber(world.height, `tracks.${id}.world.height`),
+    startX: readTrackNumber(start.x, `tracks.${id}.start.x`),
+    startY: readTrackNumber(start.y, `tracks.${id}.start.y`),
+    startAngle: Number.isFinite(start.angle) ? start.angle : 0,
+    displayLength: rawTrack.display?.length ?? "",
+    background: type === "straight" ? "#26362d" : "#b78345",
+    dirtSpecks: [],
+  };
+
+  if (type === "circuit") {
+    const surface = rawTrack.surface ?? {};
+    track.path = readPointList(rawTrack.path, `tracks.${id}.path`);
+    track.collisionPath = buildSmoothedCircuitSamples(track.path, rawTrack.collisionSteps ?? 16);
+    track.lap = buildPathMetrics(track.collisionPath);
+    track.startAngle = Number.isFinite(start.angle) ? start.angle : getPathSegmentAngle(track.path, 0);
+    track.roadHalfWidth = readTrackNumber(surface.roadHalfWidth, `tracks.${id}.surface.roadHalfWidth`);
+    track.curbWidth = readTrackNumber(surface.curbWidth, `tracks.${id}.surface.curbWidth`);
+    track.grassWidth = readTrackNumber(surface.grassWidth, `tracks.${id}.surface.grassWidth`);
+    track.fencePadding = readTrackNumber(surface.fencePadding, `tracks.${id}.surface.fencePadding`);
+    track.dirtSpecks = buildDirtSpecks(track);
+  } else if (type === "straight") {
+    track.runwayWidth = readTrackNumber(rawTrack.runwayWidthM ?? 14, `tracks.${id}.runwayWidthM`) * PX_PER_METER;
+  } else {
+    throw new Error(`unsupported track type ${type}`);
+  }
+
+  return track;
+}
+
+function applyTrackToWorld(track) {
+  WORLD.width = track.width;
+  WORLD.height = track.height;
+  WORLD.runwayY = track.startY;
+  WORLD.runwayWidth = track.runwayWidth ?? 14 * PX_PER_METER;
+}
+
+function buildDirtSpecks(track) {
+  return Array.from({ length: 180 }, (_, index) => ({
+    x: (index * 149 + 83) % track.width,
+    y: (index * 211 + 47) % track.height,
+    r: 1 + (index % 4) * 0.55,
+    a: 0.05 + (index % 5) * 0.018,
+  }));
 }
 
 function applyVehicleModel(data) {
@@ -1344,9 +1669,71 @@ function readNumber(value, name) {
   return value;
 }
 
-function handleVehicleLoadError(error) {
+function readTrackNumber(value, name) {
+  if (!Number.isFinite(value)) {
+    throw new Error(`track data field ${name} must be a number`);
+  }
+
+  return value;
+}
+
+function readString(value, name) {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`data field ${name} must be a string`);
+  }
+
+  return value;
+}
+
+function readPointList(points, name) {
+  if (!Array.isArray(points) || points.length < 3) {
+    throw new Error(`${name} must define at least three points`);
+  }
+
+  return points.map((point, index) => {
+    if (!Array.isArray(point) || !Number.isFinite(point[0]) || !Number.isFinite(point[1])) {
+      throw new Error(`${name}[${index}] must be [x, y]`);
+    }
+
+    return [point[0], point[1]];
+  });
+}
+
+function handleLoadError(error) {
   console.error(error);
-  drawStatus(`Failed to load ${VEHICLE_DATA_URL}: ${error.message}`);
+  drawStatus(`Failed to load data: ${error.message}`);
+}
+
+function getActiveTrack() {
+  return TRACKS[activeTrackId] ?? TRACK_LIST[0];
+}
+
+function isCircuitTrack(track = getActiveTrack()) {
+  return track?.type === "circuit";
+}
+
+function hasLapTrack(track = getActiveTrack()) {
+  return Boolean(track?.lap);
+}
+
+function hasFenceTrack(track = getActiveTrack()) {
+  return Boolean(track?.path && Number.isFinite(track.fencePadding));
+}
+
+function hasSurfaceTrack(track = getActiveTrack()) {
+  return Boolean(track?.path && Number.isFinite(track.roadHalfWidth));
+}
+
+function isSessionStarted() {
+  if (!activeTrackId) {
+    return false;
+  }
+
+  if (hasLapTrack()) {
+    return lapState !== LAP_STATE.ready;
+  }
+
+  return testActive;
 }
 
 function drawStatus(message) {
@@ -1449,11 +1836,11 @@ function getTireTrailIntensity(slideAmount, brakingForward, speedKmh) {
 }
 
 function getSurfaceAt(x, y) {
-  if (activeTrackId !== "circuit") {
+  if (!hasSurfaceTrack()) {
     return SURFACE.road;
   }
 
-  const track = TRACKS.circuit;
+  const track = getActiveTrack();
   const sample = getTrackSample(x, y);
 
   if (sample.distance <= track.roadHalfWidth) {
@@ -1467,9 +1854,37 @@ function getSurfaceAt(x, y) {
   return SURFACE.grass;
 }
 
+function getLapTrackSample(track, x, y) {
+  if (!track?.collisionPath || !Number.isFinite(lapLastSegmentIndex)) {
+    return getTrackSample(x, y);
+  }
+
+  const path = track.collisionPath;
+  const lap = track.lap;
+  let best = null;
+
+  for (let offset = -LAP_SAMPLE_WINDOW_SEGMENTS; offset <= LAP_SAMPLE_WINDOW_SEGMENTS; offset += 1) {
+    const index = wrapIndex(lapLastSegmentIndex + offset, path.length);
+    const sample = getSegmentSample(x, y, path[index], path[(index + 1) % path.length]);
+
+    if (!best || sample.distanceSq < best.distanceSq) {
+      best = sample;
+      best.segmentIndex = index;
+      best.segmentRatio = sample.ratio;
+    }
+  }
+
+  const segmentStartPx = lap.cumulativePx[best.segmentIndex] ?? 0;
+  const segmentLengthPx = (lap.cumulativePx[best.segmentIndex + 1] ?? segmentStartPx) - segmentStartPx;
+  best.progressPx = segmentStartPx + segmentLengthPx * best.segmentRatio;
+
+  return best;
+}
+
 function getTrackSample(x, y) {
-  const path = TRACKS.circuit.collisionPath ?? TRACKS.circuit.path;
-  const lap = TRACKS.circuit.lap;
+  const track = getActiveTrack();
+  const path = track.collisionPath ?? track.path;
+  const lap = track.lap;
   let best = null;
 
   for (let i = 0; i < path.length; i += 1) {
@@ -1715,6 +2130,10 @@ function clamp(value, min, max) {
 
 function wrap(value, max) {
   return ((value % max) + max) % max;
+}
+
+function wrapIndex(value, length) {
+  return ((value % length) + length) % length;
 }
 
 function drawEllipse(x, y, radiusX, radiusY) {

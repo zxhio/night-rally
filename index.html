@@ -5,15 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Night Rally</title>
     <link rel="stylesheet" href="src/styles.css" />
-    <script src="src/main.js?v=20260601-stable-time-card" defer></script>
+    <script src="src/main.js?v=20260601-track-data" defer></script>
   </head>
   <body>
     <main class="game-shell">
       <canvas id="game" aria-label="Night Rally driving prototype"></canvas>
-      <div class="track-switch" aria-label="Track selection">
-        <button class="track-button is-active" type="button" data-track="circuit">Circuit</button>
-        <button class="track-button" type="button" data-track="straight">Straight</button>
-      </div>
+      <aside class="track-panel" id="track-panel" aria-label="Track selection"></aside>
       <section class="hud" aria-live="polite">
         <div class="metric metric-primary metric-time">
           <span>Time</span>
