@@ -1140,10 +1140,7 @@ function renderTrackSelector() {
   trackPanel.replaceChildren();
 
   if (!compact) {
-    const hint = document.createElement("div");
-    hint.className = "track-hint";
-    hint.textContent = "Up / Down select, Left / Right confirm";
-    trackPanel.append(hint);
+    trackPanel.append(createTrackHint());
   }
 
   for (const track of tracks) {
@@ -1180,6 +1177,23 @@ function renderTrackSelector() {
   }
 
   trackPanel.append(createLeaderboardPanel(getDisplayedLeaderboardTrack()));
+}
+
+function createTrackHint() {
+  const hint = document.createElement("div");
+  hint.className = "track-hint";
+
+  const title = document.createElement("strong");
+  title.className = "track-hint-title";
+  title.textContent = "选择赛道";
+
+  const subtitle = document.createElement("span");
+  subtitle.className = "track-hint-subtitle";
+  subtitle.textContent = "↑↓ 切换 · Enter 确认";
+
+  hint.append(title, subtitle);
+
+  return hint;
 }
 
 function updateTrackSelector(force = false) {
@@ -1406,11 +1420,7 @@ function getTrackThumbnailCache(track, width, height) {
 function drawCircuitThumbnail(thumbCtx, track, width, height) {
   const toThumb = getThumbnailProjector(track, width, height);
 
-  strokeThumbnailPath(thumbCtx, track.path, toThumb, 18, TRACK_PALETTE.grassOuter);
-  if (track.curbWidth > 0) {
-    strokeThumbnailPath(thumbCtx, track.path, toThumb, 12, TRACK_PALETTE.curbOuter);
-  }
-  strokeThumbnailPath(thumbCtx, track.path, toThumb, 8, TRACK_PALETTE.road);
+  strokeThumbnailPath(thumbCtx, track.path, toThumb, 4, "rgba(238, 243, 236, 0.78)");
 
   const start = toThumb([track.startX, track.startY]);
   thumbCtx.save();
@@ -1453,22 +1463,16 @@ function drawThumbnailCarMarker(thumbCtx, track, width, height) {
 
 function drawStraightThumbnail(thumbCtx, width, height) {
   const roadY = height / 2;
-  thumbCtx.strokeStyle = "#343a38";
+  thumbCtx.strokeStyle = "rgba(238, 243, 236, 0.78)";
   thumbCtx.lineCap = "round";
-  thumbCtx.lineWidth = 26;
+  thumbCtx.lineWidth = 4;
   thumbCtx.beginPath();
   thumbCtx.moveTo(12, roadY);
   thumbCtx.lineTo(width - 12, roadY);
   thumbCtx.stroke();
 
-  thumbCtx.strokeStyle = "rgba(238, 243, 236, 0.28)";
-  thumbCtx.setLineDash([8, 8]);
-  thumbCtx.lineWidth = 2;
-  thumbCtx.beginPath();
-  thumbCtx.moveTo(18, roadY);
-  thumbCtx.lineTo(width - 18, roadY);
-  thumbCtx.stroke();
-  thumbCtx.setLineDash([]);
+  thumbCtx.fillStyle = "#f0efe5";
+  thumbCtx.fillRect(12, roadY - 6, 2, 12);
 }
 
 function strokeThumbnailPath(thumbCtx, points, transformPoint, lineWidth, color) {
