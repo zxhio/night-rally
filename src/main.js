@@ -1572,6 +1572,9 @@ function readVehicleHandling(handling) {
     slideDecelKmhS: readNumber(slide.decel_kmh_s, "handling.slide.decel_kmh_s"),
     slideSustainKmh: readNumber(slide.sustain_kmh, "handling.slide.sustain_kmh"),
     slideRecoverKmhS: readNumber(slide.recover_kmh_s, "handling.slide.recover_kmh_s"),
+    turnLossSteerMin: readNumber(turn.loss_steer_min, "handling.turn.loss_steer_min"),
+    turnLossSteerFull: readNumber(turn.loss_steer_full, "handling.turn.loss_steer_full"),
+    turnLossCurve: readNumber(turn.loss_curve, "handling.turn.loss_curve"),
     turnDrag: readNumber(turn.drag, "handling.turn.drag"),
     turnDecelKmhS: readNumber(turn.decel_kmh_s, "handling.turn.decel_kmh_s"),
     turnSustainKmh: readNumber(turn.sustain_kmh, "handling.turn.sustain_kmh"),
@@ -2154,7 +2157,7 @@ function applySurfaceEntrySpeedDrop(forwardSpeed, fromSurface, toSurface) {
 function applyTurnAndSlideSpeedLoss(forwardSpeed, steerAmount, slideAmount, throttle, dt) {
   const speedKmh = Math.abs(toKmh(toGameSpeed(forwardSpeed)));
   const speedPressure = smoothstep(25, 85, speedKmh);
-  const turnAmount = smoothstep(0.08, 1, steerAmount) * speedPressure * (1 - slideAmount);
+  const turnAmount = getTurnLossPressure(steerAmount) * speedPressure * (1 - slideAmount);
   if (turnAmount <= 0 && slideAmount <= 0) {
     return forwardSpeed;
   }
@@ -2183,7 +2186,7 @@ function applyCornerSustain(forwardSpeed, steerAmount, slideAmount, throttle, dt
     return forwardSpeed;
   }
 
-  const turnAmount = smoothstep(0.08, 1, steerAmount) * (1 - slideAmount);
+  const turnAmount = getTurnLossPressure(steerAmount) * (1 - slideAmount);
   const cornerAmount = Math.max(turnAmount, slideAmount);
   if (cornerAmount <= 0) {
     return forwardSpeed;
@@ -2204,6 +2207,12 @@ function applyCornerSustain(forwardSpeed, steerAmount, slideAmount, throttle, dt
 
 function getCornerSustainKmh(slideAmount) {
   return lerp(TUNING.turnSustainKmh, TUNING.slideSustainKmh, slideAmount);
+}
+
+function getTurnLossPressure(steerAmount) {
+  const pressure = smoothstep(TUNING.turnLossSteerMin, TUNING.turnLossSteerFull, steerAmount);
+
+  return Math.pow(pressure, TUNING.turnLossCurve);
 }
 
 function getVehicleAcceleration(speedKmh) {

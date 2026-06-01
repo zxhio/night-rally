@@ -45,6 +45,9 @@ handling.slide.decel_kmh_s            侧滑时最小掉速, km/h/s
 handling.slide.sustain_kmh            按住油门漂移时收敛的弯中速度, km/h
 handling.slide.recover_kmh_s          按住油门漂移低于弯中速度时的回补速度, km/h/s
 
+handling.turn.loss_steer_min          抓地转向掉速开始的转向输入阈值, 0..1
+handling.turn.loss_steer_full         抓地转向掉速完全生效的转向输入阈值, 0..1
+handling.turn.loss_curve              抓地转向掉速压力曲线指数
 handling.turn.drag                    抓地转向前向掉速系数, 1/s
 handling.turn.decel_kmh_s             抓地转向最小掉速, km/h/s
 handling.turn.sustain_kmh             按住油门抓地转向时收敛的弯中速度, km/h
@@ -253,8 +256,18 @@ moveAngleRadNext =
 throttleScale =
   1 - driftAmount * (1 - handling.slide.throttle_keep)
 
+turnSteerPressure =
+  pow(
+    smoothstep(
+      handling.turn.loss_steer_min,
+      handling.turn.loss_steer_full,
+      abs(steerNormNext)
+    ),
+    handling.turn.loss_curve
+  )
+
 turnAmount =
-  smoothstep(0.08, 1, abs(steerNormNext))
+  turnSteerPressure
   * smoothstep(25, 85, speedAbsKmh)
   * (1 - driftAmountNext)
 

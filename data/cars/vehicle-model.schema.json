@@ -44,6 +44,9 @@
         "recover_kmh_s": "speed recovery rate back to sustain while full-throttle sliding km/h/s"
       },
       "turn": {
+        "loss_steer_min": "steer amount below which grip turning does not add speed loss 0..1",
+        "loss_steer_full": "steer amount where grip turning speed loss reaches full strength 0..1",
+        "loss_curve": "exponent applied to grip turning speed loss pressure",
         "drag": "speed loss scalar while gripping and turning",
         "decel_kmh_s": "minimum speed drop while gripping and turning km/h/s",
         "sustain_kmh": "speed that full-throttle grip turning tends to settle around km/h",

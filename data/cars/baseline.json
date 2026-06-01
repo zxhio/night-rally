@@ -57,6 +57,9 @@
       "recover_kmh_s": 22
     },
     "turn": {
+      "loss_steer_min": 0.22,
+      "loss_steer_full": 1,
+      "loss_curve": 1.35,
       "drag": 1.6,
       "decel_kmh_s": 3.04,
       "sustain_kmh": 70,
