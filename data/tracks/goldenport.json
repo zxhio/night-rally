@@ -12,9 +12,9 @@
   },
   "surface": {
     "roadHalfWidth": 70,
-    "curbWidth": 21,
-    "grassWidth": 96,
-    "fencePadding": 30
+    "curbWidth": 0,
+    "grassWidth": 72,
+    "fencePadding": 0
   },
   "collisionSteps": 16,
   "display": {

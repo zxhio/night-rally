@@ -53,6 +53,7 @@ const LAP_STATE = {
 const LAP_PROGRESS_JUMP_BUFFER_M = 18;
 const LAP_FINISH_LINE_WINDOW_M = 90;
 const LAP_SAMPLE_WINDOW_SEGMENTS = 48;
+const TRACK_CORRIDOR_SAMPLE_WINDOW_SEGMENTS = 96;
 const LAP_REVERSE_CORRECT_M = 40;
 const LAP_REVERSE_CORRECT_AHEAD_M = 6;
 const LAP_FINISH_COAST_S = 2;
@@ -408,22 +409,29 @@ function drawCircuit(track) {
   ctx.lineJoin = "round";
   ctx.lineCap = "round";
 
+  ctx.strokeStyle = "rgba(32, 46, 25, 0.54)";
+  ctx.lineWidth = grassHalfWidth * 2 + 4;
+  strokeCircuitPath(track.path);
+  ctx.stroke();
+
   ctx.strokeStyle = TRACK_PALETTE.grassOuter;
   ctx.lineWidth = grassHalfWidth * 2;
   strokeCircuitPath(track.path);
   ctx.stroke();
 
-  ctx.strokeStyle = TRACK_PALETTE.curbOuter;
-  ctx.lineWidth = curbHalfWidth * 2;
-  strokeCircuitPath(track.path);
-  ctx.stroke();
+  if (track.curbWidth > 0) {
+    ctx.strokeStyle = TRACK_PALETTE.curbOuter;
+    ctx.lineWidth = curbHalfWidth * 2;
+    strokeCircuitPath(track.path);
+    ctx.stroke();
 
-  ctx.setLineDash([10, 10]);
-  ctx.strokeStyle = "rgba(196, 78, 67, 0.34)";
-  ctx.lineWidth = curbHalfWidth * 2 - 6;
-  strokeCircuitPath(track.path);
-  ctx.stroke();
-  ctx.setLineDash([]);
+    ctx.setLineDash([10, 10]);
+    ctx.strokeStyle = "rgba(196, 78, 67, 0.34)";
+    ctx.lineWidth = Math.max(1, curbHalfWidth * 2 - 6);
+    strokeCircuitPath(track.path);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
 
   ctx.strokeStyle = TRACK_PALETTE.road;
   ctx.lineWidth = track.roadHalfWidth * 2;
@@ -743,8 +751,8 @@ function resolveBounds() {
 
 function resolveTrackFence() {
   const track = getActiveTrack();
-  const sample = getTrackSample(car.x, car.y);
-  const fenceLimit = track.roadHalfWidth + track.curbWidth + track.grassWidth + track.fencePadding - car.radius * 0.35;
+  const sample = getTrackCorridorSample(track, car.x, car.y);
+  const fenceLimit = getGrassEdgeLimit(track) - car.radius * 0.35;
 
   if (sample.distance <= fenceLimit) {
     return;
@@ -1202,7 +1210,9 @@ function drawCircuitThumbnail(thumbCtx, track, width, height) {
   const toThumb = getThumbnailProjector(track, width, height);
 
   strokeThumbnailPath(thumbCtx, track.path, toThumb, 18, TRACK_PALETTE.grassOuter);
-  strokeThumbnailPath(thumbCtx, track.path, toThumb, 12, TRACK_PALETTE.curbOuter);
+  if (track.curbWidth > 0) {
+    strokeThumbnailPath(thumbCtx, track.path, toThumb, 12, TRACK_PALETTE.curbOuter);
+  }
   strokeThumbnailPath(thumbCtx, track.path, toThumb, 8, TRACK_PALETTE.road);
 
   const start = toThumb([track.startX, track.startY]);
@@ -1908,7 +1918,7 @@ function getSurfaceAt(x, y) {
   }
 
   const track = getActiveTrack();
-  const sample = getTrackSample(x, y);
+  const sample = getTrackCorridorSample(track, x, y);
 
   if (sample.distance <= track.roadHalfWidth) {
     return SURFACE.road;
@@ -1921,17 +1931,33 @@ function getSurfaceAt(x, y) {
   return SURFACE.grass;
 }
 
+function getGrassEdgeLimit(track) {
+  return track.roadHalfWidth + track.curbWidth + track.grassWidth;
+}
+
+function getTrackCorridorSample(track, x, y) {
+  if (!track?.collisionPath || !Number.isFinite(lapLastSegmentIndex)) {
+    return getTrackSample(x, y);
+  }
+
+  return getTrackSampleInWindow(track, x, y, lapLastSegmentIndex, TRACK_CORRIDOR_SAMPLE_WINDOW_SEGMENTS);
+}
+
 function getLapTrackSample(track, x, y) {
   if (!track?.collisionPath || !Number.isFinite(lapLastSegmentIndex)) {
     return getTrackSample(x, y);
   }
 
+  return getTrackSampleInWindow(track, x, y, lapLastSegmentIndex, LAP_SAMPLE_WINDOW_SEGMENTS);
+}
+
+function getTrackSampleInWindow(track, x, y, centerSegmentIndex, windowSegments) {
   const path = track.collisionPath;
   const lap = track.lap;
   let best = null;
 
-  for (let offset = -LAP_SAMPLE_WINDOW_SEGMENTS; offset <= LAP_SAMPLE_WINDOW_SEGMENTS; offset += 1) {
-    const index = wrapIndex(lapLastSegmentIndex + offset, path.length);
+  for (let offset = -windowSegments; offset <= windowSegments; offset += 1) {
+    const index = wrapIndex(centerSegmentIndex + offset, path.length);
     const sample = getSegmentSample(x, y, path[index], path[(index + 1) % path.length]);
 
     if (!best || sample.distanceSq < best.distanceSq) {
