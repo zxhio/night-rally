@@ -3,6 +3,7 @@ const TRACK_DATA_URL = "data/tracks/index.json?v=20260601-track-data";
 const TRACK_DATA_BASE_URL = "data/tracks/";
 const LEADERBOARD_STORAGE_KEY = "night-rally.leaderboard.v1";
 const LEADERBOARD_MAX_RECORDS_PER_TRACK = 50;
+const LEADERBOARD_DISPLAY_LIMIT = 20;
 
 const DEFAULT_TUNING = {
   reverseAccelerationScale: 0.5,
@@ -132,6 +133,7 @@ let activeTrackId = null;
 let selectedTrackId = null;
 let trackSelectionConfirmed = false;
 let trackSelectorState = "";
+let leaderboardState = "";
 let currentSurface = SURFACE.road;
 let previousSurface = SURFACE.road;
 let lapState = LAP_STATE.ready;
@@ -213,12 +215,12 @@ function update(dt) {
   }
 
   const input = readInput();
-  if (lapState === LAP_STATE.finished && hasLapTrack()) {
+  if (lapState === LAP_STATE.finished && hasTimedRunTrack()) {
     holdFinishedLap(dt);
     return;
   }
 
-  if (lapState === LAP_STATE.finishing && hasLapTrack()) {
+  if (lapState === LAP_STATE.finishing && hasTimedRunTrack()) {
     updateFinishCoast(dt);
     return;
   }
@@ -1034,7 +1036,7 @@ function updateHud(dt = HUD_UPDATE_INTERVAL_S, force = false) {
 }
 
 function getLapStateLabel() {
-  if (!hasLapTrack() && !hasStraightFinish()) {
+  if (!hasTimedRunTrack()) {
     return "Test";
   }
 
@@ -1079,6 +1081,7 @@ function saveLeaderboardRecord(trackId, record) {
 
   try {
     localStorage.setItem(LEADERBOARD_STORAGE_KEY, JSON.stringify(records));
+    updateTrackSelector(true);
   } catch (error) {
     console.warn("Failed to save leaderboard", error);
   }
@@ -1152,6 +1155,8 @@ function renderTrackSelector() {
     button.append(thumb, meta);
     trackPanel.append(button);
   }
+
+  trackPanel.append(createLeaderboardPanel(getDisplayedLeaderboardTrack()));
 }
 
 function updateTrackSelector(force = false) {
@@ -1159,13 +1164,90 @@ function updateTrackSelector(force = false) {
     return;
   }
 
-  const nextState = `${activeTrackId}:${selectedTrackId}:${isTrackSelectionMode() ? "select" : "compact"}`;
+  const leaderboardTrackId = getDisplayedLeaderboardTrack()?.id ?? "";
+  const nextState = [
+    activeTrackId,
+    selectedTrackId,
+    isTrackSelectionMode() ? "select" : "compact",
+    leaderboardTrackId,
+    leaderboardState,
+  ].join(":");
   if (!force && nextState === trackSelectorState) {
     return;
   }
 
   trackSelectorState = nextState;
   renderTrackSelector();
+}
+
+function createLeaderboardPanel(track) {
+  const panel = document.createElement("section");
+  panel.className = "leaderboard";
+
+  const title = document.createElement("div");
+  title.className = "leaderboard-title";
+
+  const label = document.createElement("span");
+  label.textContent = "Leaderboard";
+
+  const count = document.createElement("span");
+  count.textContent = "Top 20";
+
+  title.append(label, count);
+  panel.append(title);
+
+  const list = document.createElement("ol");
+  list.className = "leaderboard-list";
+
+  const records = getLeaderboardRecordsForTrack(track?.id).slice(0, LEADERBOARD_DISPLAY_LIMIT);
+  leaderboardState = `${track?.id ?? ""}:${records.map((record) => `${record.timeS.toFixed(3)}@${record.createdAt}`).join("|")}`;
+
+  if (records.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "leaderboard-empty";
+    empty.textContent = "No times yet";
+    list.append(empty);
+  } else {
+    records.forEach((record, index) => {
+      const item = document.createElement("li");
+      const rank = document.createElement("span");
+      const time = document.createElement("strong");
+      const date = document.createElement("span");
+
+      rank.className = "leaderboard-rank";
+      rank.textContent = String(index + 1).padStart(2, "0");
+      time.textContent = formatTime(record.timeS);
+      date.textContent = formatRecordDate(record.createdAt);
+      item.append(rank, time, date);
+      list.append(item);
+    });
+  }
+
+  panel.append(list);
+
+  return panel;
+}
+
+function getDisplayedLeaderboardTrack() {
+  return isTrackSelectionMode() ? TRACKS[selectedTrackId] : getActiveTrack();
+}
+
+function getLeaderboardRecordsForTrack(trackId) {
+  const records = loadLeaderboardRecords()[trackId] ?? [];
+
+  return Array.isArray(records)
+    ? records.filter(isValidLeaderboardRecord).sort((a, b) => a.timeS - b.timeS)
+    : [];
+}
+
+function formatRecordDate(value) {
+  const date = new Date(value);
+
+  if (!Number.isFinite(date.getTime())) {
+    return "--";
+  }
+
+  return `${String(date.getMonth() + 1).padStart(2, "0")}/${String(date.getDate()).padStart(2, "0")}`;
 }
 
 function updateTrackThumbnails() {
@@ -1466,7 +1548,7 @@ function resetCar() {
 }
 
 function resetLapMode() {
-  lapState = hasLapTrack() || hasStraightFinish() ? LAP_STATE.ready : LAP_STATE.running;
+  lapState = hasTimedRunTrack() ? LAP_STATE.ready : LAP_STATE.running;
   lapTime = 0;
   lapDistance = 0;
   lapProgress = 0;
@@ -1904,12 +1986,16 @@ function hasStraightFinish(track = getActiveTrack()) {
   return track?.type === "straight" && Number.isFinite(track.finishDistanceM);
 }
 
+function hasTimedRunTrack(track = getActiveTrack()) {
+  return hasLapTrack(track) || hasStraightFinish(track);
+}
+
 function isSessionStarted() {
   if (!activeTrackId) {
     return false;
   }
 
-  if (hasLapTrack() || hasStraightFinish()) {
+  if (hasTimedRunTrack()) {
     return lapState !== LAP_STATE.ready;
   }
 
