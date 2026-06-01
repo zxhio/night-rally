@@ -62,6 +62,11 @@ const SURFACE = {
   curb: { label: "Curb", speedDropScale: 0.95, accelScale: 1, steer: 0.94 },
   grass: { label: "Grass", speedDropScale: 0.9, accelScale: 0.8, steer: 0.8 },
 };
+const GRASS_SURFACE = {
+  speedDropMin: 0.5,
+  accelMin: 0.65,
+  steerMin: 0.82,
+};
 const TRACK_PALETTE = {
   grassOuter: "#4f7136",
   grassInner: "#6f8d4c",
@@ -1919,20 +1924,37 @@ function getSurfaceAt(x, y) {
 
   const track = getActiveTrack();
   const sample = getTrackCorridorSample(track, x, y);
+  const carHalfWidth = getCarHalfWidth();
 
-  if (sample.distance <= track.roadHalfWidth) {
+  if (sample.distance + carHalfWidth <= track.roadHalfWidth) {
     return SURFACE.road;
   }
 
-  if (sample.distance <= track.roadHalfWidth + track.curbWidth) {
-    return SURFACE.curb;
-  }
-
-  return SURFACE.grass;
+  return getGrassSurface(track, sample.distance, carHalfWidth);
 }
 
 function getGrassEdgeLimit(track) {
   return track.roadHalfWidth + track.curbWidth + track.grassWidth;
+}
+
+function getGrassSurface(track, distance, carHalfWidth) {
+  const grassWidth = Math.max(1, getGrassEdgeLimit(track) - track.roadHalfWidth);
+  const carWidth = Math.max(1, carHalfWidth * 2);
+  const outsideWheelDepth = Math.max(0, distance + carHalfWidth - track.roadHalfWidth);
+  const carOffRoad = clamp(outsideWheelDepth / carWidth, 0, 1);
+  const grassDepth = clamp(outsideWheelDepth / grassWidth, 0, 1);
+  const penalty = carOffRoad * smoothstep(0, 1, grassDepth);
+
+  return {
+    ...SURFACE.grass,
+    speedDropScale: lerp(SURFACE.road.speedDropScale, GRASS_SURFACE.speedDropMin, penalty),
+    accelScale: lerp(SURFACE.road.accelScale, GRASS_SURFACE.accelMin, penalty),
+    steer: lerp(SURFACE.road.steer, GRASS_SURFACE.steerMin, penalty),
+  };
+}
+
+function getCarHalfWidth() {
+  return Math.max(1, (CAR_SPEC?.widthM ?? 1.8) * PX_PER_METER * 0.5);
 }
 
 function getTrackCorridorSample(track, x, y) {
@@ -2126,7 +2148,7 @@ function applySurfaceEntrySpeedDrop(forwardSpeed, fromSurface, toSurface) {
     return forwardSpeed;
   }
 
-  return forwardSpeed * toSurface.speedDropScale;
+  return forwardSpeed * (toSurface.speedDropScale / Math.max(0.01, fromSurface.speedDropScale));
 }
 
 function applyTurnAndSlideSpeedLoss(forwardSpeed, steerAmount, slideAmount, throttle, dt) {
