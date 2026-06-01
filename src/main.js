@@ -33,7 +33,7 @@ const KMH_PER_GAME_SPEED = 3.5;
 const SPEED_SCALE = KMH_PER_GAME_SPEED * PX_PER_METER / 3.6;
 const METERS_PER_PIXEL = 1 / PX_PER_METER;
 const STANDARD_G = 9.80665;
-const SKID_MARKS_MAX = 420;
+const SKID_MARKS_MAX = 260;
 const DRIFT_ACTIVE_MIN_AMOUNT = 0.04;
 const DRIFT_RESET_MIN_AMOUNT = 0.005;
 const DRIFT_TRAIL_MIN_AMOUNT = 0.08;
@@ -42,6 +42,8 @@ const DRIFT_TRAIL_FADE = 0.996;
 const BRAKE_TRAIL_MIN_KMH = 35;
 const BRAKE_TRAIL_INTENSITY = 0.3;
 const TURN_RADIUS_MAX_M = 999;
+const HUD_UPDATE_INTERVAL_S = 0.1;
+const THUMBNAIL_UPDATE_INTERVAL_S = 0.12;
 const LAP_STATE = {
   ready: "ready",
   running: "running",
@@ -134,6 +136,8 @@ let lapReverseM = 0;
 let lapFinishCoastTime = 0;
 let lapFinishVx = 0;
 let lapFinishVy = 0;
+let hudUpdateAccumulator = HUD_UPDATE_INTERVAL_S;
+let thumbnailUpdateAccumulator = THUMBNAIL_UPDATE_INTERVAL_S;
 const skidMarks = [];
 
 window.addEventListener("keydown", (event) => {
@@ -185,7 +189,9 @@ function loop(now) {
   lastTime = now;
 
   update(dt);
-  draw();
+  if (!isTrackSelectionMode()) {
+    draw();
+  }
   requestAnimationFrame(loop);
 }
 
@@ -193,7 +199,7 @@ function update(dt) {
   if (isTrackSelectionMode()) {
     steeringInput = updateSteeringInput(steeringInput, 0, dt);
     updateCamera(dt);
-    updateHud();
+    updateHud(dt);
     return;
   }
 
@@ -300,7 +306,7 @@ function update(dt) {
   const trailIntensity = getTireTrailIntensity(driftAmount, brakingForward, speedAbsKmh);
   addSkidMarks(forward, right, moveDirection, trailIntensity, speedAbsKmh);
   updateCamera(dt);
-  updateHud();
+  updateHud(dt);
 }
 
 function draw() {
@@ -672,8 +678,13 @@ function drawSkidMarks() {
     mark.life *= DRIFT_TRAIL_FADE;
   }
 
-  while (skidMarks.length > 0 && skidMarks[0].life < 0.08) {
-    skidMarks.shift();
+  let expiredCount = 0;
+  while (expiredCount < skidMarks.length && skidMarks[expiredCount].life < 0.08) {
+    expiredCount += 1;
+  }
+
+  if (expiredCount > 0) {
+    skidMarks.splice(0, expiredCount);
   }
 
   ctx.restore();
@@ -846,7 +857,7 @@ function holdFinishedLap(dt) {
   previousSurface = currentSurface;
   slipDeg = Math.abs(radToDeg(angleDelta(car.bodyAngleRad, car.moveAngleRad)));
   updateCamera(dt);
-  updateHud();
+  updateHud(dt);
 }
 
 function startLapFinishCoast() {
@@ -893,7 +904,7 @@ function updateFinishCoast(dt) {
   }
 
   updateCamera(dt);
-  updateHud();
+  updateHud(dt);
 }
 
 function stopCarForLapFinish() {
@@ -943,7 +954,15 @@ function updateCamera(dt) {
   camera.y += (targetY - camera.y) * Math.min(1, dt * 4);
 }
 
-function updateHud() {
+function updateHud(dt = HUD_UPDATE_INTERVAL_S, force = false) {
+  hudUpdateAccumulator += dt;
+  thumbnailUpdateAccumulator += dt;
+
+  if (!force && hudUpdateAccumulator < HUD_UPDATE_INTERVAL_S) {
+    return;
+  }
+
+  hudUpdateAccumulator = 0;
   speedEl.textContent = String(Math.round(toKmh(toGameSpeed(Math.hypot(car.vx, car.vy)))));
   accelEl.textContent = formatAccelG(accelG);
   timeEl.textContent = formatTime(hasLapTrack() ? lapTime : testTime);
@@ -957,7 +976,11 @@ function updateHud() {
   lapStateEl.textContent = getLapStateLabel();
   lapProgressEl.textContent = `${Math.round(lapProgress * 100)}% lap`;
   updateTrackSelector();
-  updateTrackThumbnails();
+
+  if (force || thumbnailUpdateAccumulator >= THUMBNAIL_UPDATE_INTERVAL_S) {
+    thumbnailUpdateAccumulator = 0;
+    updateTrackThumbnails();
+  }
 }
 
 function getLapStateLabel() {
@@ -1052,9 +1075,21 @@ function updateTrackThumbnails() {
 
   for (const thumb of trackPanel.querySelectorAll(".track-thumb")) {
     const track = TRACKS[thumb.dataset.track];
-    if (track) {
+    if (track && (track.id === activeTrackId || isTrackSelectionMode())) {
       drawTrackThumbnail(thumb, track);
     }
+  }
+}
+
+function refreshTrackThumbnail(trackId) {
+  if (!trackPanel) {
+    return;
+  }
+
+  const thumb = trackPanel.querySelector(`.track-thumb[data-track="${trackId}"]`);
+  const track = TRACKS[trackId];
+  if (thumb && track) {
+    drawTrackThumbnail(thumb, track);
   }
 }
 
@@ -1066,6 +1101,8 @@ function openTrackSelection() {
   trackSelectionConfirmed = false;
   selectedTrackId = activeTrackId;
   updateTrackSelector(true);
+  updateHud(HUD_UPDATE_INTERVAL_S, true);
+  draw();
 }
 
 function confirmTrackSelection(trackId = selectedTrackId) {
@@ -1083,6 +1120,7 @@ function confirmTrackSelection(trackId = selectedTrackId) {
   trackSelectionConfirmed = true;
   selectedTrackId = trackId;
   updateTrackSelector(true);
+  updateHud(HUD_UPDATE_INTERVAL_S, true);
 }
 
 function handleTrackSelectionKey(event) {
@@ -1106,9 +1144,12 @@ function handleTrackSelectionKey(event) {
 
 function moveTrackSelection(direction) {
   const currentIndex = Math.max(0, TRACK_LIST.findIndex((track) => track.id === selectedTrackId));
+  const previousTrackId = selectedTrackId;
   const nextIndex = wrapIndex(currentIndex + direction, TRACK_LIST.length);
   selectedTrackId = TRACK_LIST[nextIndex].id;
   updateTrackSelector(true);
+  refreshTrackThumbnail(previousTrackId);
+  refreshTrackThumbnail(selectedTrackId);
 }
 
 function drawTrackThumbnail(canvasEl, track) {
@@ -1116,19 +1157,45 @@ function drawTrackThumbnail(canvasEl, track) {
   const width = canvasEl.width;
   const height = canvasEl.height;
 
-  thumbCtx.clearRect(0, 0, width, height);
-  thumbCtx.fillStyle = track.background ?? "#b78345";
-  thumbCtx.fillRect(0, 0, width, height);
-
-  if (track.type === "circuit") {
-    drawCircuitThumbnail(thumbCtx, track, width, height);
-  } else {
-    drawStraightThumbnail(thumbCtx, width, height);
-  }
+  drawTrackThumbnailBase(thumbCtx, track, width, height);
 
   if (track.id === activeTrackId) {
     drawThumbnailCarMarker(thumbCtx, track, width, height);
   }
+}
+
+function drawTrackThumbnailBase(thumbCtx, track, width, height) {
+  const cache = getTrackThumbnailCache(track, width, height);
+  thumbCtx.clearRect(0, 0, width, height);
+  thumbCtx.drawImage(cache.canvas, 0, 0);
+}
+
+function getTrackThumbnailCache(track, width, height) {
+  if (track.thumbnailCache?.width === width && track.thumbnailCache.height === height) {
+    return track.thumbnailCache;
+  }
+
+  const cacheCanvas = document.createElement("canvas");
+  cacheCanvas.width = width;
+  cacheCanvas.height = height;
+  const cacheCtx = cacheCanvas.getContext("2d");
+
+  cacheCtx.fillStyle = track.background ?? "#b78345";
+  cacheCtx.fillRect(0, 0, width, height);
+
+  if (track.type === "circuit") {
+    drawCircuitThumbnail(cacheCtx, track, width, height);
+  } else {
+    drawStraightThumbnail(cacheCtx, width, height);
+  }
+
+  track.thumbnailCache = {
+    width,
+    height,
+    canvas: cacheCanvas,
+  };
+
+  return track.thumbnailCache;
 }
 
 function drawCircuitThumbnail(thumbCtx, track, width, height) {
@@ -1292,7 +1359,8 @@ function resetCar() {
   resetLapMode();
   camera.x = car.x;
   camera.y = car.y;
-  updateTrackSelector(true);
+  updateHud(HUD_UPDATE_INTERVAL_S, true);
+  draw();
 }
 
 function resetLapMode() {
@@ -1312,7 +1380,6 @@ function resetLapMode() {
     lapLastProgressM = 0;
     lapLastSegmentIndex = 0;
   }
-  updateTrackSelector(true);
 }
 
 function resize() {
