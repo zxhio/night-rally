@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Night Rally</title>
     <link rel="stylesheet" href="src/styles.css" />
-    <script src="src/main.js?v=20260601-turn-loss-drift-threshold" defer></script>
+    <script src="src/main.js?v=20260601-stable-time-card" defer></script>
   </head>
   <body>
     <main class="game-shell">
@@ -15,45 +15,50 @@
         <button class="track-button" type="button" data-track="straight">Straight</button>
       </div>
       <section class="hud" aria-live="polite">
-        <div class="metric">
+        <div class="metric metric-primary metric-time">
+          <span>Time</span>
+          <strong id="time">0.00s</strong>
+        </div>
+        <div class="metric metric-primary">
           <span>Speed (km/h)</span>
           <strong id="speed">0</strong>
         </div>
-        <div class="metric">
-          <span>G Force (G)</span>
+        <div class="metric metric-primary">
+          <span>G</span>
           <strong id="accel">0.00</strong>
         </div>
-        <div class="metric">
+        <div class="metric metric-primary metric-wide">
           <span>Distance (m)</span>
           <strong id="distance">0.0</strong>
         </div>
-        <div class="metric metric-time">
-          <span>Time (s)</span>
-          <strong id="time">0.00</strong>
+        <small class="metric-debug" id="lap-progress">0%</small>
+        <div class="metric metric-debug">
+          <span>Lap</span>
+          <strong id="lap-state">Ready</strong>
         </div>
-        <div class="metric">
+        <div class="metric metric-debug">
           <span>Steer</span>
           <strong id="steer">0%</strong>
         </div>
-        <div class="metric">
-          <span>Slip (deg)</span>
-          <strong id="slip">0</strong>
-        </div>
-        <div class="metric">
-          <span>Drift</span>
-          <strong id="drift">0%</strong>
-        </div>
-        <div class="metric">
+        <div class="metric metric-debug">
           <span>Yaw (deg/s)</span>
           <strong id="yaw">0</strong>
         </div>
-        <div class="metric">
+        <div class="metric metric-debug">
           <span>Radius (m)</span>
           <strong id="radius">--</strong>
         </div>
-        <div class="metric">
+        <div class="metric metric-secondary">
           <span>Surface</span>
           <strong id="surface">Road</strong>
+        </div>
+        <div class="metric metric-secondary">
+          <span>Drift</span>
+          <strong id="drift">0%</strong>
+        </div>
+        <div class="metric metric-secondary">
+          <span>Slip</span>
+          <strong id="slip">0</strong>
         </div>
       </section>
     </main>

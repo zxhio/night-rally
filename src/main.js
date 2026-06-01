@@ -1,4 +1,4 @@
-const VEHICLE_DATA_URL = "data/cars/baseline.json?v=20260601-turn-loss-drift-threshold";
+const VEHICLE_DATA_URL = "data/cars/baseline.json?v=20260601-stable-time-card";
 
 const DEFAULT_TUNING = {
   reverseAccelerationScale: 0.5,
@@ -62,6 +62,7 @@ const CIRCUIT_PATH = [
   [10051, 4584],
 ];
 const CIRCUIT_COLLISION_PATH = buildSmoothedCircuitSamples(CIRCUIT_PATH, 16);
+const CIRCUIT_LAP = buildPathMetrics(CIRCUIT_COLLISION_PATH);
 
 const TRACKS = {
   straight: {
@@ -81,6 +82,7 @@ const TRACKS = {
     startAngle: getPathSegmentAngle(CIRCUIT_PATH, 0),
     path: CIRCUIT_PATH,
     collisionPath: CIRCUIT_COLLISION_PATH,
+    lap: CIRCUIT_LAP,
     roadHalfWidth: 70,
     curbWidth: 21,
     grassWidth: 96,
@@ -109,6 +111,16 @@ const DRIFT_TRAIL_FADE = 0.996;
 const BRAKE_TRAIL_MIN_KMH = 35;
 const BRAKE_TRAIL_INTENSITY = 0.3;
 const TURN_RADIUS_MAX_M = 999;
+const LAP_STATE = {
+  ready: "ready",
+  running: "running",
+  finishing: "finishing",
+  finished: "finished",
+};
+const LAP_PROGRESS_JUMP_BUFFER_M = 18;
+const LAP_REVERSE_CORRECT_M = 40;
+const LAP_REVERSE_CORRECT_AHEAD_M = 6;
+const LAP_FINISH_COAST_S = 2;
 const SURFACE = {
   road: { label: "Road", speedDropScale: 1, accelScale: 1, steer: 1 },
   curb: { label: "Curb", speedDropScale: 0.95, accelScale: 1, steer: 0.94 },
@@ -149,6 +161,8 @@ const driftEl = document.querySelector("#drift");
 const yawEl = document.querySelector("#yaw");
 const radiusEl = document.querySelector("#radius");
 const surfaceEl = document.querySelector("#surface");
+const lapStateEl = document.querySelector("#lap-state");
+const lapProgressEl = document.querySelector("#lap-progress");
 const trackButtons = [...document.querySelectorAll("[data-track]")];
 
 const keys = new Set();
@@ -180,6 +194,15 @@ let turnRadiusM = TURN_RADIUS_MAX_M;
 let activeTrackId = "circuit";
 let currentSurface = SURFACE.road;
 let previousSurface = SURFACE.road;
+let lapState = LAP_STATE.ready;
+let lapTime = 0;
+let lapDistance = 0;
+let lapProgress = 0;
+let lapLastProgressM = 0;
+let lapReverseM = 0;
+let lapFinishCoastTime = 0;
+let lapFinishVx = 0;
+let lapFinishVy = 0;
 const skidMarks = [];
 
 window.addEventListener("keydown", (event) => {
@@ -232,6 +255,16 @@ function loop(now) {
 
 function update(dt) {
   const input = readInput();
+  if (lapState === LAP_STATE.finished && activeTrackId === "circuit") {
+    holdFinishedLap(dt);
+    return;
+  }
+
+  if (lapState === LAP_STATE.finishing && activeTrackId === "circuit") {
+    updateFinishCoast(dt);
+    return;
+  }
+
   if (!testActive && input.throttle > 0) {
     testActive = true;
   }
@@ -307,17 +340,19 @@ function update(dt) {
   const previousY = car.y;
   car.x += car.vx * dt;
   car.y += car.vy * dt;
+  const frameDistanceM = Math.hypot(car.x - previousX, car.y - previousY) * METERS_PER_PIXEL;
 
   if (testActive) {
     testTime += dt;
   }
-  testDistance += Math.hypot(car.x - previousX, car.y - previousY) * METERS_PER_PIXEL;
+  testDistance += frameDistanceM;
   updateAccelerationMeter(dt);
 
   resolveBounds();
   if (activeTrackId === "circuit") {
     resolveTrackFence();
   }
+  updateLapMode(input, dt, frameDistanceM);
   slipDeg = Math.abs(radToDeg(angleDelta(car.bodyAngleRad, car.moveAngleRad)));
   const trailIntensity = getTireTrailIntensity(driftAmount, brakingForward, speedAbsKmh);
   addSkidMarks(forward, right, moveDirection, trailIntensity, speedAbsKmh);
@@ -509,6 +544,50 @@ function buildSmoothedCircuitSamples(points, stepsPerCurve) {
   }
 
   return samples;
+}
+
+function buildPathMetrics(points) {
+  const cumulativePx = [0];
+  let lengthPx = 0;
+
+  for (let i = 0; i < points.length; i += 1) {
+    const current = points[i];
+    const next = points[(i + 1) % points.length];
+    lengthPx += Math.hypot(next[0] - current[0], next[1] - current[1]);
+    cumulativePx.push(lengthPx);
+  }
+
+  return {
+    cumulativePx,
+    lengthPx,
+    lengthM: lengthPx / PX_PER_METER,
+  };
+}
+
+function getTrackPoseAtProgress(track, progressM) {
+  const progressPx = wrap(progressM * PX_PER_METER, track.lap.lengthPx);
+  const path = track.collisionPath;
+  const cumulative = track.lap.cumulativePx;
+  let segmentIndex = 0;
+
+  for (let i = 1; i < cumulative.length; i += 1) {
+    if (progressPx <= cumulative[i]) {
+      segmentIndex = i - 1;
+      break;
+    }
+  }
+
+  const segmentStartPx = cumulative[segmentIndex];
+  const segmentEndPx = cumulative[segmentIndex + 1] ?? track.lap.lengthPx;
+  const segmentLengthPx = Math.max(1, segmentEndPx - segmentStartPx);
+  const ratio = clamp((progressPx - segmentStartPx) / segmentLengthPx, 0, 1);
+  const a = path[segmentIndex];
+  const b = path[(segmentIndex + 1) % path.length];
+  const x = lerp(a[0], b[0], ratio);
+  const y = lerp(a[1], b[1], ratio);
+  const angle = Math.atan2(b[1] - a[1], b[0] - a[0]);
+
+  return { x, y, angle, progressPx };
 }
 
 function strokeCircuitPath(points) {
@@ -744,6 +823,156 @@ function resolveTrackFence() {
   }
 }
 
+function updateLapMode(input, dt, frameDistanceM) {
+  if (activeTrackId !== "circuit") {
+    return;
+  }
+
+  const track = TRACKS.circuit;
+  const sample = getTrackSample(car.x, car.y);
+  const sampleProgressM = sample.progressPx * METERS_PER_PIXEL;
+
+  if (lapState === LAP_STATE.ready) {
+    lapLastProgressM = sampleProgressM;
+    lapDistance = 0;
+    lapProgress = 0;
+
+    if (input.throttle > 0) {
+      lapState = LAP_STATE.running;
+      lapTime = 0;
+    }
+
+    return;
+  }
+
+  if (lapState !== LAP_STATE.running) {
+    return;
+  }
+
+  lapTime += dt;
+
+  let progressDeltaM = sampleProgressM - lapLastProgressM;
+  if (progressDeltaM < -track.lap.lengthM / 2) {
+    progressDeltaM += track.lap.lengthM;
+  } else if (progressDeltaM > track.lap.lengthM / 2) {
+    progressDeltaM -= track.lap.lengthM;
+  }
+
+  const maxProgressDeltaM = frameDistanceM + LAP_PROGRESS_JUMP_BUFFER_M;
+  if (progressDeltaM >= 0 && progressDeltaM <= maxProgressDeltaM) {
+    lapDistance += progressDeltaM;
+    lapLastProgressM = sampleProgressM;
+  } else if (progressDeltaM < 0 && Math.abs(progressDeltaM) <= maxProgressDeltaM) {
+    lapReverseM += Math.abs(progressDeltaM);
+    lapLastProgressM = sampleProgressM;
+  } else if (progressDeltaM > 0) {
+    lapReverseM = Math.max(0, lapReverseM - progressDeltaM);
+  }
+
+  if (lapReverseM >= LAP_REVERSE_CORRECT_M) {
+    correctLapReverse(track);
+    return;
+  }
+
+  if (lapDistance >= track.lap.lengthM) {
+    lapDistance = track.lap.lengthM;
+    startLapFinishCoast();
+  }
+
+  lapProgress = clamp(lapDistance / track.lap.lengthM, 0, 1);
+}
+
+function holdFinishedLap(dt) {
+  car.vx = 0;
+  car.vy = 0;
+  steeringInput = updateSteeringInput(steeringInput, 0, dt);
+  driftAmount = 0;
+  driftActive = false;
+  yawRateDegS = 0;
+  accelG = 0;
+  lastSpeedKmh = 0;
+  currentSurface = getSurfaceAt(car.x, car.y);
+  previousSurface = currentSurface;
+  slipDeg = Math.abs(radToDeg(angleDelta(car.bodyAngleRad, car.moveAngleRad)));
+  updateCamera(dt);
+  updateHud();
+}
+
+function startLapFinishCoast() {
+  lapState = LAP_STATE.finishing;
+  lapFinishCoastTime = 0;
+  lapFinishVx = car.vx;
+  lapFinishVy = car.vy;
+  steeringInput = 0;
+  driftAmount = 0;
+  driftActive = false;
+  yawRateDegS = 0;
+  accelG = 0;
+  lastSpeedKmh = Math.round(toKmh(toGameSpeed(Math.hypot(car.vx, car.vy))));
+}
+
+function updateFinishCoast(dt) {
+  lapFinishCoastTime += dt;
+  const previousX = car.x;
+  const previousY = car.y;
+  const remainingRatio = clamp(1 - lapFinishCoastTime / LAP_FINISH_COAST_S, 0, 1);
+
+  car.vx = lapFinishVx * remainingRatio;
+  car.vy = lapFinishVy * remainingRatio;
+  car.x += car.vx * dt;
+  car.y += car.vy * dt;
+  resolveBounds();
+  resolveTrackFence();
+  testDistance += Math.hypot(car.x - previousX, car.y - previousY) * METERS_PER_PIXEL;
+  steeringInput = 0;
+  driftAmount = 0;
+  driftActive = false;
+  yawRateDegS = 0;
+  accelG = 0;
+  lastSpeedKmh = 0;
+  currentSurface = getSurfaceAt(car.x, car.y);
+  previousSurface = currentSurface;
+  slipDeg = Math.abs(radToDeg(angleDelta(car.bodyAngleRad, car.moveAngleRad)));
+
+  if (lapFinishCoastTime >= LAP_FINISH_COAST_S) {
+    stopCarForLapFinish();
+    lapState = LAP_STATE.finished;
+  }
+
+  updateCamera(dt);
+  updateHud();
+}
+
+function stopCarForLapFinish() {
+  car.vx = 0;
+  car.vy = 0;
+  driftAmount = 0;
+  driftActive = false;
+  yawRateDegS = 0;
+  accelG = 0;
+  lastSpeedKmh = 0;
+  car.moveAngleRad = car.bodyAngleRad;
+}
+
+function correctLapReverse(track) {
+  const correctedProgressM = clamp(lapDistance + LAP_REVERSE_CORRECT_AHEAD_M, 0, track.lap.lengthM - 1);
+  const pose = getTrackPoseAtProgress(track, correctedProgressM);
+
+  car.x = pose.x;
+  car.y = pose.y;
+  car.vx = 0;
+  car.vy = 0;
+  car.bodyAngleRad = pose.angle;
+  car.moveAngleRad = pose.angle;
+  car.angle = pose.angle;
+  steeringInput = 0;
+  driftAmount = 0;
+  lapReverseM = 0;
+  lapLastProgressM = pose.progressPx * METERS_PER_PIXEL;
+  currentSurface = getSurfaceAt(car.x, car.y);
+  previousSurface = currentSurface;
+}
+
 function updateCamera(dt) {
   const minZoom = activeTrackId === "circuit" ? 0.42 : 0.7;
   const maxZoom = activeTrackId === "circuit" ? 0.7 : 1;
@@ -764,7 +993,7 @@ function updateCamera(dt) {
 function updateHud() {
   speedEl.textContent = String(Math.round(toKmh(toGameSpeed(Math.hypot(car.vx, car.vy)))));
   accelEl.textContent = formatAccelG(accelG);
-  timeEl.textContent = testTime.toFixed(2);
+  timeEl.textContent = formatTime(activeTrackId === "circuit" ? lapTime : testTime);
   distanceEl.textContent = testDistance.toFixed(1);
   steerEl.textContent = `${Math.round(steeringInput * 100)}%`;
   slipEl.textContent = String(Math.round(slipDeg));
@@ -772,6 +1001,28 @@ function updateHud() {
   yawEl.textContent = String(Math.round(yawRateDegS));
   radiusEl.textContent = turnRadiusM >= TURN_RADIUS_MAX_M ? "--" : String(Math.round(turnRadiusM));
   surfaceEl.textContent = currentSurface.label;
+  lapStateEl.textContent = getLapStateLabel();
+  lapProgressEl.textContent = `${Math.round(lapProgress * 100)}% lap`;
+}
+
+function getLapStateLabel() {
+  if (activeTrackId !== "circuit") {
+    return "Test";
+  }
+
+  if (lapState === LAP_STATE.running) {
+    return "Run";
+  }
+
+  if (lapState === LAP_STATE.finishing) {
+    return "Coast";
+  }
+
+  if (lapState === LAP_STATE.finished) {
+    return "Finish";
+  }
+
+  return "Ready";
 }
 
 function setTrack(trackId) {
@@ -813,8 +1064,23 @@ function resetCar() {
   skidMarks.length = 0;
   currentSurface = getSurfaceAt(car.x, car.y);
   previousSurface = currentSurface;
+  resetLapMode();
   camera.x = car.x;
   camera.y = car.y;
+}
+
+function resetLapMode() {
+  lapState = activeTrackId === "circuit" ? LAP_STATE.ready : LAP_STATE.running;
+  lapTime = 0;
+  lapDistance = 0;
+  lapProgress = 0;
+  lapReverseM = 0;
+  lapFinishCoastTime = 0;
+  lapFinishVx = 0;
+  lapFinishVy = 0;
+  lapLastProgressM = activeTrackId === "circuit"
+    ? getTrackSample(car.x, car.y).progressPx * METERS_PER_PIXEL
+    : 0;
 }
 
 function resize() {
@@ -1203,6 +1469,7 @@ function getSurfaceAt(x, y) {
 
 function getTrackSample(x, y) {
   const path = TRACKS.circuit.collisionPath ?? TRACKS.circuit.path;
+  const lap = TRACKS.circuit.lap;
   let best = null;
 
   for (let i = 0; i < path.length; i += 1) {
@@ -1212,7 +1479,15 @@ function getTrackSample(x, y) {
 
     if (!best || sample.distanceSq < best.distanceSq) {
       best = sample;
+      best.segmentIndex = i;
+      best.segmentRatio = sample.ratio;
     }
+  }
+
+  if (lap && best) {
+    const segmentStartPx = lap.cumulativePx[best.segmentIndex] ?? 0;
+    const segmentLengthPx = (lap.cumulativePx[best.segmentIndex + 1] ?? segmentStartPx) - segmentStartPx;
+    best.progressPx = segmentStartPx + segmentLengthPx * best.segmentRatio;
   }
 
   return best;
@@ -1239,7 +1514,7 @@ function getSegmentSample(x, y, a, b) {
   const segmentLength = Math.sqrt(lengthSq || 1);
   const tangent = { x: dx / segmentLength, y: dy / segmentLength };
 
-  return { x: px, y: py, normal, tangent, distance, distanceSq };
+  return { x: px, y: py, normal, tangent, distance, distanceSq, ratio };
 }
 
 function getTurnRadiusM(speedAbsKmh, yawRate) {
@@ -1282,6 +1557,17 @@ function formatAccelG(value) {
   const normalized = Math.abs(value) < 0.005 ? 0 : value;
 
   return normalized.toFixed(2);
+}
+
+function formatTime(seconds) {
+  if (seconds < 60) {
+    return `${seconds.toFixed(2)}s`;
+  }
+
+  const minutes = Math.floor(seconds / 60);
+  const restSeconds = seconds - minutes * 60;
+
+  return `${minutes}m ${restSeconds.toFixed(2).padStart(5, "0")}s`;
 }
 
 function applyThrottle(forwardSpeed, maxSpeed, throttleScale, dt) {
@@ -1425,6 +1711,10 @@ function smoothstep(edge0, edge1, value) {
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function wrap(value, max) {
+  return ((value % max) + max) % max;
 }
 
 function drawEllipse(x, y, radiusX, radiusY) {

@@ -63,18 +63,18 @@ body {
   top: 16px;
   left: 16px;
   display: grid;
-  grid-template-columns: repeat(5, max-content);
-  align-items: center;
+  grid-template-columns: repeat(4, max-content);
+  align-items: start;
   gap: 8px;
   max-width: calc(100vw - 32px);
   pointer-events: none;
 }
 
 .metric {
-  min-height: 42px;
+  min-height: 40px;
   border-radius: 6px;
   border: 1px solid rgba(238, 243, 236, 0.16);
-  background: rgba(12, 15, 14, 0.7);
+  background: rgba(12, 15, 14, 0.58);
   box-shadow: 0 10px 26px rgba(0, 0, 0, 0.22);
   backdrop-filter: blur(10px);
 }
@@ -83,7 +83,7 @@ body {
   display: grid;
   grid-template-columns: 1fr;
   gap: 1px;
-  min-width: 84px;
+  min-width: 86px;
   padding: 6px 10px;
 }
 
@@ -98,6 +98,60 @@ body {
   font-size: 17px;
   line-height: 1.1;
   font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.metric small {
+  color: rgba(238, 243, 236, 0.7);
+  font-size: 11px;
+  line-height: 1.1;
+  font-weight: 800;
+}
+
+.metric-primary {
+  min-width: 96px;
+  min-height: 50px;
+  padding: 7px 12px;
+  background: rgba(12, 15, 14, 0.66);
+}
+
+.metric-primary span {
+  font-size: 11px;
+}
+
+.metric-primary strong {
+  font-size: 22px;
+}
+
+.metric-primary small {
+  font-size: 12px;
+}
+
+.metric-wide {
+  min-width: 118px;
+}
+
+.metric-time {
+  width: 142px;
+}
+
+.metric-secondary {
+  min-width: 78px;
+  min-height: 34px;
+  padding: 5px 9px;
+  background: rgba(12, 15, 14, 0.48);
+}
+
+.metric-secondary span {
+  font-size: 10px;
+}
+
+.metric-secondary strong {
+  font-size: 15px;
+}
+
+.metric-debug {
+  display: none;
 }
 
 @media (max-width: 640px) {
@@ -109,11 +163,16 @@ body {
   }
 
   .hud {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     right: 16px;
   }
 
   .metric {
+    min-width: 0;
+  }
+
+  .metric-primary,
+  .metric-secondary {
     min-width: 0;
   }
 }
