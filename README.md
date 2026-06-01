@@ -26,7 +26,9 @@ http://localhost:5173
 - 北京金港国际赛车场
 - 3公里直道
 
-选中赛道后开始单圈驾驶。真实赛道跑完一圈后，车辆会短暂滑行并停下；直道用于加速和操控测试。
+选中赛道后开始单圈驾驶。真实赛道跑完一圈后，车辆会短暂滑行并停下；直道跑满 3 公里后也会结束。
+
+每次有效完赛都会记录一次成绩。右侧赛道面板会显示当前赛道最快 Top 20；成绩保存在当前浏览器的 `localStorage` 中，不会同步到其他设备。
 
 ## 操作
 
@@ -51,6 +53,7 @@ http://localhost:5173
 - 车辆数据：`data/cars/baseline.json`
 - 赛道列表：`data/tracks/index.json`
 - 赛道文件：`data/tracks/*.json`
+- 成绩存储：浏览器 `localStorage` 的 `night-rally.leaderboard.v1`
 
 新增赛道时，在 `data/tracks/` 新建赛道 JSON，再把它加入 `data/tracks/index.json`。
 
