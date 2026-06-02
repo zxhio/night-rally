@@ -63,7 +63,9 @@ const LAP_STATE = {
 const GAME_STATE = {
   menu: "menu",
   trackSelect: "track_select",
+  trackAction: "track_action",
   recordSelect: "record_select",
+  recordTools: "record_tools",
   multiplayer: "multiplayer",
   settings: "settings",
   countdown: "countdown",
@@ -121,6 +123,23 @@ const SETTINGS_ITEM = {
   color: 1,
   display: 2,
 };
+const TRACK_ACTION_ITEMS = [
+  {
+    id: "start",
+    title: "开始",
+    detail: "直接开跑，不使用记录",
+  },
+  {
+    id: "challenge",
+    title: "挑战记录",
+    detail: "选择一条本地记录作为 Ghost",
+  },
+  {
+    id: "records",
+    title: "导入导出记录",
+    detail: "管理当前地图的本地记录",
+  },
+];
 const MAIN_MENU_ITEMS = [
   {
     id: "practice",
@@ -202,6 +221,7 @@ let defaultTrackId = null;
 let gameState = GAME_STATE.menu;
 let trackSelectorState = "";
 let selectedMainMenuIndex = 0;
+let selectedTrackActionIndex = 0;
 let selectedRecordIndex = 0;
 let selectedGhostReplayId = null;
 let leaderboardState = "";
@@ -2161,8 +2181,18 @@ function renderTrackSelector() {
     return;
   }
 
+  if (gameState === GAME_STATE.trackAction) {
+    trackPanel.append(createTrackActionPanel());
+    return;
+  }
+
   if (gameState === GAME_STATE.recordSelect) {
     trackPanel.append(createRecordSelectionPanel());
+    return;
+  }
+
+  if (gameState === GAME_STATE.recordTools) {
+    trackPanel.append(createRecordToolsPanel());
     return;
   }
 
@@ -2237,14 +2267,61 @@ function createRaceTrackPanel() {
   const trackList = document.createElement("div");
   trackList.className = "start-track-list";
   TRACK_LIST.forEach((candidate) => {
-    trackList.append(createTrackCard(candidate, false, () => openRecordSelection(candidate.id)));
+    trackList.append(createTrackCard(candidate, false, () => openTrackAction(candidate.id)));
   });
 
   const controls = document.createElement("span");
   controls.className = "start-controls";
-  controls.textContent = "方向键 / WASD 切换 · Enter 确认 · Esc 返回";
+  controls.textContent = "↑↓ 切换 · Enter 确认 · Esc 返回";
 
-  panel.append(title, hint, trackList, createLeaderboardPanel(getDisplayedLeaderboardTrack()), controls);
+  panel.append(title, controls, hint, trackList);
+
+  return panel;
+}
+
+function createTrackActionPanel() {
+  const track = TRACKS[selectedTrackId] ?? getActiveTrack();
+  selectedTrackActionIndex = clamp(selectedTrackActionIndex, 0, TRACK_ACTION_ITEMS.length - 1);
+
+  const panel = document.createElement("section");
+  panel.className = "start-panel track-action-panel";
+
+  const title = document.createElement("strong");
+  title.className = "start-title";
+  title.textContent = "竞速模式";
+
+  const trackName = document.createElement("span");
+  trackName.className = "start-track";
+  trackName.textContent = `${track.name} · ${track.displayLength}`;
+
+  const controls = document.createElement("span");
+  controls.className = "start-controls";
+  controls.textContent = "↑↓ 选择 · Enter 确认 · Esc 返回地图";
+
+  const actions = document.createElement("div");
+  actions.className = "action-list";
+
+  TRACK_ACTION_ITEMS.forEach((item, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "mode-card action-card";
+    button.classList.toggle("is-selected", index === selectedTrackActionIndex);
+    button.addEventListener("click", () => {
+      selectedTrackActionIndex = index;
+      activateTrackAction();
+    });
+
+    const name = document.createElement("strong");
+    name.textContent = item.title;
+
+    const detail = document.createElement("span");
+    detail.textContent = item.detail;
+
+    button.append(name, detail);
+    actions.append(button);
+  });
+
+  panel.append(title, trackName, controls, actions);
 
   return panel;
 }
@@ -2293,6 +2370,29 @@ function createRecordSelectionPanel() {
   controls.textContent = "↑↓ 选择 · Enter 开跑 · Esc 返回地图";
 
   panel.append(title, trackName, list, controls);
+
+  return panel;
+}
+
+function createRecordToolsPanel() {
+  const track = TRACKS[selectedTrackId] ?? getActiveTrack();
+
+  const panel = document.createElement("section");
+  panel.className = "start-panel record-tools-panel";
+
+  const title = document.createElement("strong");
+  title.className = "start-title";
+  title.textContent = "导入导出记录";
+
+  const trackName = document.createElement("span");
+  trackName.className = "start-track";
+  trackName.textContent = `${track.name} · ${track.displayLength}`;
+
+  const controls = document.createElement("span");
+  controls.className = "start-controls";
+  controls.textContent = "Esc / Backspace 返回";
+
+  panel.append(title, trackName, createLeaderboardPanel(track), controls);
 
   return panel;
 }
@@ -2477,6 +2577,7 @@ function updateTrackSelector(force = false) {
     activeTrackId,
     selectedTrackId,
     gameState,
+    selectedTrackActionIndex,
     selectedRecordIndex,
     selectedGhostReplayId ?? "",
     leaderboardTrackId,
@@ -2735,7 +2836,10 @@ function updateControlHint() {
 }
 
 function getDisplayedLeaderboardTrack() {
-  return gameState === GAME_STATE.trackSelect || gameState === GAME_STATE.recordSelect
+  return gameState === GAME_STATE.trackSelect
+    || gameState === GAME_STATE.trackAction
+    || gameState === GAME_STATE.recordSelect
+    || gameState === GAME_STATE.recordTools
     ? TRACKS[selectedTrackId]
     : getActiveTrack();
 }
@@ -2790,7 +2894,9 @@ function isTrackSelectionMode() {
 function isMenuOverlayMode() {
   return gameState === GAME_STATE.menu
     || gameState === GAME_STATE.trackSelect
+    || gameState === GAME_STATE.trackAction
     || gameState === GAME_STATE.recordSelect
+    || gameState === GAME_STATE.recordTools
     || gameState === GAME_STATE.multiplayer
     || gameState === GAME_STATE.settings;
 }
@@ -2798,6 +2904,7 @@ function isMenuOverlayMode() {
 function openTrackSelection(trackId = activeTrackId) {
   setGameState(GAME_STATE.trackSelect);
   selectedTrackId = TRACKS[trackId] ? trackId : activeTrackId;
+  selectedTrackActionIndex = 0;
   selectedGhostReplayId = null;
   updateResultPanel();
   updateTrackSelector(true);
@@ -2823,8 +2930,16 @@ function handleMenuOverlayKey(event) {
     return handleTrackSelectionKey(event);
   }
 
+  if (gameState === GAME_STATE.trackAction) {
+    return handleTrackActionKey(event);
+  }
+
   if (gameState === GAME_STATE.recordSelect) {
     return handleRecordSelectionKey(event);
+  }
+
+  if (gameState === GAME_STATE.recordTools) {
+    return handleRecordToolsKey(event);
   }
 
   if (gameState === GAME_STATE.settings) {
@@ -2950,11 +3065,73 @@ function handleTrackSelectionKey(event) {
   }
 
   if (event.code === "ArrowLeft" || event.code === "ArrowRight" || event.code === "Enter" || event.code === "Space") {
-    openRecordSelection();
+    openTrackAction();
     return true;
   }
 
   return false;
+}
+
+function openTrackAction(trackId = selectedTrackId) {
+  if (!TRACKS[trackId]) {
+    return;
+  }
+
+  keys.clear();
+  selectedTrackId = trackId;
+  selectedTrackActionIndex = 0;
+  selectedGhostReplayId = null;
+  setGameState(GAME_STATE.trackAction);
+  updateTrackSelector(true);
+  updateHud(HUD_UPDATE_INTERVAL_S, true);
+  draw();
+}
+
+function handleTrackActionKey(event) {
+  if (event.code === "Escape" || event.code === "Backspace") {
+    openTrackSelection(selectedTrackId);
+    return true;
+  }
+
+  if (event.code === "ArrowUp" || event.code === "KeyW" || event.code === "ArrowLeft" || event.code === "KeyA") {
+    moveTrackActionSelection(-1);
+    return true;
+  }
+
+  if (event.code === "ArrowDown" || event.code === "KeyS" || event.code === "ArrowRight" || event.code === "KeyD") {
+    moveTrackActionSelection(1);
+    return true;
+  }
+
+  if (event.code === "Enter" || event.code === "Space") {
+    activateTrackAction();
+    return true;
+  }
+
+  return false;
+}
+
+function moveTrackActionSelection(direction) {
+  selectedTrackActionIndex = wrapIndex(selectedTrackActionIndex + direction, TRACK_ACTION_ITEMS.length);
+  updateTrackSelector(true);
+}
+
+function activateTrackAction() {
+  const item = TRACK_ACTION_ITEMS[selectedTrackActionIndex];
+
+  if (item?.id === "start") {
+    startTimedRun(selectedTrackId, null);
+    return;
+  }
+
+  if (item?.id === "challenge") {
+    openRecordSelection(selectedTrackId);
+    return;
+  }
+
+  if (item?.id === "records") {
+    openRecordTools(selectedTrackId);
+  }
 }
 
 function openRecordSelection(trackId = selectedTrackId) {
@@ -2974,7 +3151,7 @@ function openRecordSelection(trackId = selectedTrackId) {
 
 function handleRecordSelectionKey(event) {
   if (event.code === "Escape" || event.code === "Backspace") {
-    openTrackSelection(selectedTrackId);
+    openTrackAction(selectedTrackId);
     return true;
   }
 
@@ -2990,6 +3167,28 @@ function handleRecordSelectionKey(event) {
 
   if (event.code === "Enter" || event.code === "Space") {
     confirmRecordSelection();
+    return true;
+  }
+
+  return false;
+}
+
+function openRecordTools(trackId = selectedTrackId) {
+  if (!TRACKS[trackId]) {
+    return;
+  }
+
+  keys.clear();
+  selectedTrackId = trackId;
+  setGameState(GAME_STATE.recordTools);
+  updateTrackSelector(true);
+  updateHud(HUD_UPDATE_INTERVAL_S, true);
+  draw();
+}
+
+function handleRecordToolsKey(event) {
+  if (event.code === "Escape" || event.code === "Backspace" || event.code === "Enter" || event.code === "Space") {
+    openTrackAction(selectedTrackId);
     return true;
   }
 
