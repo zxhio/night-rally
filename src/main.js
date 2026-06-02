@@ -2,8 +2,11 @@ const VEHICLE_DATA_URL = "data/cars/baseline.json?v=20260601-track-data";
 const TRACK_DATA_URL = "data/tracks/index.json?v=20260601-track-data";
 const TRACK_DATA_BASE_URL = "data/tracks/";
 const LEADERBOARD_STORAGE_KEY = "night-rally.leaderboard.v1";
+const REPLAY_STORAGE_KEY = "night-rally.replays.v1";
 const LEADERBOARD_MAX_RECORDS_PER_TRACK = 50;
 const LEADERBOARD_DISPLAY_LIMIT = 20;
+const REPLAY_MAX_RECORDS = 30;
+const REPLAY_KEYFRAME_INTERVAL_S = 0.1;
 
 const DEFAULT_TUNING = {
   reverseAccelerationScale: 0.5,
@@ -60,6 +63,7 @@ const GAME_STATE = {
   racing: "racing",
   finishCoast: "finish_coast",
   result: "result",
+  replay: "replay",
 };
 const INPUT_ACTIONS = {
   accelerate: ["KeyW", "ArrowUp"],
@@ -168,6 +172,8 @@ let finishRecorded = false;
 let lastFinishResult = null;
 let inputTick = 0;
 let inputFrame = createEmptyInputFrame();
+let replayCapture = createEmptyReplayCapture();
+let replayPlayback = null;
 let hudUpdateAccumulator = HUD_UPDATE_INTERVAL_S;
 let thumbnailUpdateAccumulator = THUMBNAIL_UPDATE_INTERVAL_S;
 const skidMarks = [];
@@ -180,6 +186,10 @@ window.addEventListener("keydown", (event) => {
   if (event.code === "KeyR") {
     resetCar();
     openTrackSelection();
+    return;
+  }
+
+  if (gameState === GAME_STATE.replay) {
     return;
   }
 
@@ -241,6 +251,13 @@ function update(dt) {
   }
 
   const input = readInputFrame();
+  if (gameState === GAME_STATE.replay) {
+    updateReplayPlayback(dt);
+    updateCamera(dt);
+    updateHud(dt);
+    return;
+  }
+
   if (gameState === GAME_STATE.result && hasTimedRunTrack()) {
     holdFinishedLap(dt);
     return;
@@ -261,11 +278,16 @@ function updateDrivingSimulation(input, dt) {
     testActive = true;
   }
   updateStraightStartMode(input);
+  maybeStartReplayCapture(input);
+  captureReplayInput(input);
 
   previousSurface = currentSurface;
   currentSurface = getSurfaceAt(car.x, car.y);
   steeringInput = updateSteeringInput(steeringInput, input.steer * currentSurface.steer, dt);
-  input.steer = steeringInput;
+  const driveInput = {
+    ...input,
+    steer: steeringInput,
+  };
   const maxSpeedPx = toPixels(TUNING.maxSpeed);
   const reverseMaxSpeedPx = toPixels(TUNING.reverseMaxSpeed);
   let forward = angleVector(car.bodyAngleRad);
@@ -300,7 +322,7 @@ function updateDrivingSimulation(input, dt) {
 
   const speedAbsKmh = Math.abs(toKmh(toGameSpeed(forwardSpeed)));
   const slipBeforeDeg = signedSlipDeg();
-  const yawControl = getArcadeYawControl(input.steer, speedAbsKmh, slipBeforeDeg);
+  const yawControl = getArcadeYawControl(driveInput.steer, speedAbsKmh, slipBeforeDeg);
   yawRateDegS = yawControl.yawRateDegS;
   turnRadiusM = getTurnRadiusM(speedAbsKmh, yawRateDegS);
   const reverseTurn = forwardSpeed < -0.1 ? -1 : 1;
@@ -310,19 +332,19 @@ function updateDrivingSimulation(input, dt) {
   forward = angleVector(car.bodyAngleRad);
   right = { x: -forward.y, y: forward.x };
 
-  const slideTarget = getSlideTarget(input, speedAbsKmh, slipBeforeDeg, brakingForward);
+  const slideTarget = getSlideTarget(driveInput, speedAbsKmh, slipBeforeDeg, brakingForward);
   const slideRate = slideTarget > driftAmount ? TUNING.slideBuildRate : TUNING.slideReleaseRate;
   driftAmount = expFollow(driftAmount, slideTarget, slideRate, dt);
   driftActive = driftAmount > DRIFT_ACTIVE_MIN_AMOUNT;
   if (driftAmount < DRIFT_RESET_MIN_AMOUNT && slideTarget < DRIFT_RESET_MIN_AMOUNT) {
     driftAmount = 0;
   }
-  forwardSpeed = applyTurnAndSlideSpeedLoss(forwardSpeed, Math.abs(input.steer), driftAmount, input.throttle, dt);
-  forwardSpeed = applyCornerSustain(forwardSpeed, Math.abs(input.steer), driftAmount, input.throttle, dt);
+  forwardSpeed = applyTurnAndSlideSpeedLoss(forwardSpeed, Math.abs(driveInput.steer), driftAmount, input.throttle, dt);
+  forwardSpeed = applyCornerSustain(forwardSpeed, Math.abs(driveInput.steer), driftAmount, input.throttle, dt);
 
-  const counterSteer = Math.sign(input.steer) !== 0 && Math.sign(input.steer) === -Math.sign(slipBeforeDeg);
+  const counterSteer = Math.sign(driveInput.steer) !== 0 && Math.sign(driveInput.steer) === -Math.sign(slipBeforeDeg);
   const recoveryGrip = counterSteer ? TUNING.counterSteerAssist * driftAmount + TUNING.recoverAssist : 0;
-  const noSteerGrip = Math.abs(input.steer) < 0.05 ? TUNING.straightenAssist * (1 - driftAmount) : 0;
+  const noSteerGrip = Math.abs(driveInput.steer) < 0.05 ? TUNING.straightenAssist * (1 - driftAmount) : 0;
   const grip = lerp(TUNING.travelFollowRate, TUNING.slideFollowRate, driftAmount) + recoveryGrip + noSteerGrip;
   const gripFollow = 1 - Math.exp(-grip * dt);
   car.moveAngleRad += angleDelta(car.bodyAngleRad, car.moveAngleRad) * gripFollow;
@@ -348,6 +370,7 @@ function updateDrivingSimulation(input, dt) {
   updateLapMode(input, dt, frameDistanceM);
   updateStraightFinishMode();
   slipDeg = Math.abs(radToDeg(angleDelta(car.bodyAngleRad, car.moveAngleRad)));
+  captureReplayKeyframe(dt);
   const trailIntensity = getTireTrailIntensity(driftAmount, brakingForward, speedAbsKmh);
   addSkidMarks(forward, right, moveDirection, trailIntensity, speedAbsKmh);
 }
@@ -1169,6 +1192,10 @@ function getLapStateLabel() {
     return "Finish";
   }
 
+  if (gameState === GAME_STATE.replay) {
+    return "Replay";
+  }
+
   return "Ready";
 }
 
@@ -1178,11 +1205,14 @@ function recordFinishTime(track, timeS) {
   }
 
   finishRecorded = true;
+  captureReplayKeyframe(0, true);
+  const replayId = saveReplayCapture(track, timeS);
   const record = {
     trackId: track.id,
     trackName: track.name,
     timeS,
     distanceM: hasLapTrack(track) ? track.lap.lengthM : track.finishDistanceM,
+    replayId,
     createdAt: new Date().toISOString(),
   };
   const result = saveLeaderboardRecord(track.id, record);
@@ -1238,6 +1268,190 @@ function isValidLeaderboardRecord(record) {
     && Number.isFinite(record.timeS)
     && record.timeS > 0
     && typeof record.createdAt === "string";
+}
+
+function createEmptyReplayCapture() {
+  return {
+    active: false,
+    trackId: null,
+    startedAt: null,
+    elapsedS: 0,
+    keyframeElapsedS: 0,
+    inputs: [],
+    keyframes: [],
+  };
+}
+
+function maybeStartReplayCapture(input) {
+  if (replayCapture.active || gameState !== GAME_STATE.racing || input.throttle <= 0) {
+    return;
+  }
+
+  startReplayCapture(getActiveTrack());
+}
+
+function startReplayCapture(track) {
+  replayCapture = {
+    ...createEmptyReplayCapture(),
+    active: true,
+    trackId: track.id,
+    startedAt: new Date().toISOString(),
+  };
+  captureReplayKeyframe(0, true);
+}
+
+function captureReplayInput(input) {
+  if (!replayCapture.active || gameState !== GAME_STATE.racing) {
+    return;
+  }
+
+  replayCapture.inputs.push({
+    tick: input.tick,
+    throttle: input.throttle,
+    steer: input.steer,
+  });
+}
+
+function captureReplayKeyframe(dt, force = false) {
+  if (!replayCapture.active || gameState !== GAME_STATE.racing) {
+    return;
+  }
+
+  replayCapture.elapsedS += dt;
+  replayCapture.keyframeElapsedS += dt;
+  if (!force && replayCapture.keyframeElapsedS < REPLAY_KEYFRAME_INTERVAL_S) {
+    return;
+  }
+
+  replayCapture.keyframeElapsedS = 0;
+  replayCapture.keyframes.push({
+    t: replayCapture.elapsedS,
+    x: car.x,
+    y: car.y,
+    bodyAngleRad: car.bodyAngleRad,
+    moveAngleRad: car.moveAngleRad,
+  });
+}
+
+function saveReplayCapture(track, timeS) {
+  if (!replayCapture.active || replayCapture.keyframes.length === 0) {
+    return null;
+  }
+
+  const replay = {
+    id: `replay-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+    version: 1,
+    trackId: track.id,
+    trackName: track.name,
+    timeS,
+    createdAt: new Date().toISOString(),
+    inputs: replayCapture.inputs,
+    keyframes: replayCapture.keyframes,
+  };
+  const replays = loadReplayRecords()
+    .filter((candidate) => isValidReplayRecord(candidate) && candidate.id !== replay.id);
+  replays.unshift(replay);
+
+  try {
+    localStorage.setItem(REPLAY_STORAGE_KEY, JSON.stringify(replays.slice(0, REPLAY_MAX_RECORDS)));
+  } catch (error) {
+    console.warn("Failed to save replay", error);
+    return null;
+  } finally {
+    replayCapture = createEmptyReplayCapture();
+  }
+
+  return replay.id;
+}
+
+function loadReplayRecords() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(REPLAY_STORAGE_KEY) ?? "[]");
+
+    return Array.isArray(parsed) ? parsed.filter(isValidReplayRecord) : [];
+  } catch (error) {
+    console.warn("Failed to load replays", error);
+    return [];
+  }
+}
+
+function getReplayRecord(replayId) {
+  if (!replayId) {
+    return null;
+  }
+
+  return loadReplayRecords().find((replay) => replay.id === replayId) ?? null;
+}
+
+function isValidReplayRecord(replay) {
+  return replay
+    && typeof replay === "object"
+    && typeof replay.id === "string"
+    && typeof replay.trackId === "string"
+    && Array.isArray(replay.inputs)
+    && Array.isArray(replay.keyframes)
+    && replay.keyframes.length > 0;
+}
+
+function startReplayPlayback(replayId) {
+  const replay = getReplayRecord(replayId);
+  if (!replay || !TRACKS[replay.trackId]) {
+    return;
+  }
+
+  keys.clear();
+  activeTrackId = replay.trackId;
+  selectedTrackId = replay.trackId;
+  resetCar();
+  replayPlayback = {
+    replay,
+    elapsedS: 0,
+    keyframeIndex: 0,
+  };
+  setGameState(GAME_STATE.replay);
+  updateResultPanel();
+  updateTrackSelector(true);
+}
+
+function updateReplayPlayback(dt) {
+  if (!replayPlayback) {
+    setGameState(GAME_STATE.result);
+    return;
+  }
+
+  replayPlayback.elapsedS += dt;
+  const keyframes = replayPlayback.replay.keyframes;
+  while (
+    replayPlayback.keyframeIndex < keyframes.length - 2
+    && keyframes[replayPlayback.keyframeIndex + 1].t <= replayPlayback.elapsedS
+  ) {
+    replayPlayback.keyframeIndex += 1;
+  }
+
+  const current = keyframes[replayPlayback.keyframeIndex];
+  const next = keyframes[replayPlayback.keyframeIndex + 1] ?? current;
+  const duration = Math.max(0.001, next.t - current.t);
+  const ratio = clamp((replayPlayback.elapsedS - current.t) / duration, 0, 1);
+
+  car.x = lerp(current.x, next.x, ratio);
+  car.y = lerp(current.y, next.y, ratio);
+  car.bodyAngleRad = lerpAngle(current.bodyAngleRad, next.bodyAngleRad, ratio);
+  car.moveAngleRad = lerpAngle(current.moveAngleRad, next.moveAngleRad, ratio);
+  car.angle = car.bodyAngleRad;
+  car.vx = 0;
+  car.vy = 0;
+  steeringInput = 0;
+  driftAmount = 0;
+  yawRateDegS = 0;
+  accelG = 0;
+  currentSurface = getSurfaceAt(car.x, car.y);
+  previousSurface = currentSurface;
+
+  if (replayPlayback.elapsedS >= keyframes[keyframes.length - 1].t) {
+    replayPlayback = null;
+    setGameState(GAME_STATE.result);
+    updateResultPanel();
+  }
 }
 
 function renderTrackSelector() {
@@ -1413,6 +1627,13 @@ function updateResultPanel() {
   retry.textContent = "Retry";
   retry.addEventListener("click", restartCurrentTrack);
 
+  const replay = document.createElement("button");
+  replay.type = "button";
+  replay.className = "result-action";
+  replay.textContent = "Replay";
+  replay.disabled = !lastFinishResult.replayId;
+  replay.addEventListener("click", () => startReplayPlayback(lastFinishResult.replayId));
+
   const select = document.createElement("button");
   select.type = "button";
   select.className = "result-action";
@@ -1422,7 +1643,7 @@ function updateResultPanel() {
     openTrackSelection();
   });
 
-  actions.append(retry, select);
+  actions.append(retry, replay, select);
   resultPanel.replaceChildren(summary, actions);
 }
 
@@ -1765,6 +1986,8 @@ function resetCar() {
 function resetInputStream() {
   inputTick = 0;
   inputFrame = createEmptyInputFrame();
+  replayCapture = createEmptyReplayCapture();
+  replayPlayback = null;
 }
 
 function resetLapMode() {
@@ -2250,7 +2473,8 @@ function hasTimedRunTrack(track = getActiveTrack()) {
 function isSessionStarted() {
   return gameState === GAME_STATE.racing
     || gameState === GAME_STATE.finishCoast
-    || gameState === GAME_STATE.result;
+    || gameState === GAME_STATE.result
+    || gameState === GAME_STATE.replay;
 }
 
 function setGameState(nextState) {
@@ -2677,6 +2901,10 @@ function getVehicleTailScale(speedKmh) {
 
 function lerp(from, to, ratio) {
   return from + (to - from) * ratio;
+}
+
+function lerpAngle(from, to, ratio) {
+  return from + angleDelta(to, from) * ratio;
 }
 
 function smoothstep(edge0, edge1, value) {

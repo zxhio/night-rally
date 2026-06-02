@@ -103,7 +103,38 @@ isBest
 
 - `Enter` / `Space`：重开当前赛道。
 - `R`：复位并返回赛道选择。
-- 结果面板上的 `Retry` 和 `Tracks` 按钮提供同样入口。
+- 结果面板上的 `Retry`、`Replay` 和 `Tracks` 按钮提供重开、回放和返回选择入口。
+
+## 回放记录
+
+每次有效完赛会保存一条本地回放记录。回放先服务 Ghost 和多人前的数据验证，不参与碰撞，也不会再次记录成绩。
+
+存储位置：浏览器 `localStorage`。
+
+```txt
+key: night-rally.replays.v1
+```
+
+记录字段：
+
+```txt
+id
+version
+trackId
+trackName
+timeS
+createdAt
+inputs[].tick
+inputs[].throttle
+inputs[].steer
+keyframes[].t
+keyframes[].x
+keyframes[].y
+keyframes[].bodyAngleRad
+keyframes[].moveAngleRad
+```
+
+当前回放播放使用关键帧插值，只做视觉回放。输入流也会一起保存，后续固定 tick 模拟完成后，可以用输入流重放出更严格的 Ghost。
 
 ## 成绩记录
 
@@ -114,6 +145,7 @@ trackId
 trackName
 timeS
 distanceM
+replayId
 createdAt
 ```
 
