@@ -150,13 +150,36 @@ body {
 }
 
 .start-management[open] {
-  padding-top: 2px;
+  gap: 9px;
+  padding: 8px;
+  border: 1px solid rgba(238, 243, 236, 0.1);
+  border-radius: 4px;
+  background: rgba(238, 243, 236, 0.035);
 }
 
 .start-track-list {
   display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
   gap: 7px;
   margin-top: 8px;
+}
+
+.start-management .track-card {
+  gap: 5px;
+  padding: 5px;
+}
+
+.start-management .track-name {
+  font-size: 11px;
+}
+
+.start-management .track-length {
+  font-size: 9px;
+}
+
+.start-management .leaderboard {
+  margin-top: 8px;
+  text-align: left;
 }
 
 .player-profile {
