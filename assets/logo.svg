@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-label="Night Rally plus mark">
+  <g fill="none" stroke="#111111" stroke-linecap="square" stroke-linejoin="round" stroke-width="5" transform="matrix(1 0 -0.14 1 6.72 0)">
+    <path d="M8 38h30v20H8Z"/>
+    <path d="M58 38h30v20H58"/>
+    <path d="M38 38V8h20v30"/>
+    <path d="M38 58v30h20V58"/>
+    <path d="M38 38h20"/>
+    <path d="M38 38l20 20"/>
+  </g>
+</svg>
