@@ -62,6 +62,9 @@ const LAP_STATE = {
 const GAME_STATE = {
   menu: "menu",
   trackSelect: "track_select",
+  recordSelect: "record_select",
+  multiplayer: "multiplayer",
+  settings: "settings",
   countdown: "countdown",
   racing: "racing",
   finishCoast: "finish_coast",
@@ -107,6 +110,28 @@ const DEFAULT_PLAYER_PROFILE = {
   color: "#d64141",
 };
 const PLAYER_COLOR_OPTIONS = ["#d64141", "#2f80ed", "#2fbf71", "#f0b43f", "#b86ff0", "#f46d43"];
+const MAIN_MENU_ITEMS = [
+  {
+    id: "practice",
+    title: "练习模式",
+    detail: "默认地图直接开跑",
+  },
+  {
+    id: "race",
+    title: "竞速模式",
+    detail: "选择地图和记录",
+  },
+  {
+    id: "multiplayer",
+    title: "多人模式",
+    detail: "待开发",
+  },
+  {
+    id: "settings",
+    title: "设置",
+    detail: "车手档案和显示数据",
+  },
+];
 
 let vehicleModel = null;
 let TUNING = null;
@@ -162,8 +187,10 @@ let yawRateDegS = 0;
 let turnRadiusM = TURN_RADIUS_MAX_M;
 let activeTrackId = null;
 let selectedTrackId = null;
+let defaultTrackId = null;
 let gameState = GAME_STATE.menu;
 let trackSelectorState = "";
+let selectedMainMenuIndex = 0;
 let leaderboardState = "";
 let localRecordsStatus = "";
 let playerProfile = loadPlayerProfile();
@@ -198,6 +225,14 @@ window.addEventListener("keydown", (event) => {
     return;
   }
 
+  if (isMenuOverlayMode()) {
+    if (!isTextEntryTarget(event)) {
+      event.preventDefault();
+      handleMenuOverlayKey(event);
+    }
+    return;
+  }
+
   if (event.code === "KeyH" && !isTextEntryTarget(event)) {
     toggleAdvancedHud();
     return;
@@ -223,10 +258,6 @@ window.addEventListener("keydown", (event) => {
     if (track) {
       confirmTrackSelection(track.id);
     }
-    return;
-  }
-
-  if (isTrackSelectionMode() && handleTrackSelectionKey(event)) {
     return;
   }
 
@@ -256,14 +287,14 @@ function loop(now) {
   lastTime = now;
 
   update(dt);
-  if (!isTrackSelectionMode()) {
+  if (!isMenuOverlayMode()) {
     draw(getRenderState());
   }
   requestAnimationFrame(loop);
 }
 
 function update(dt) {
-  if (isTrackSelectionMode()) {
+  if (isMenuOverlayMode()) {
     steeringInput = updateSteeringInput(steeringInput, 0, dt);
     updateCamera(dt);
     updateHud(dt);
@@ -2031,13 +2062,29 @@ function renderTrackSelector() {
     return;
   }
 
-  const compact = !isTrackSelectionMode();
+  const compact = !isMenuOverlayMode();
   trackPanel.classList.toggle("is-compact", compact);
   trackPanel.classList.toggle("is-start", !compact);
+  trackPanel.classList.toggle("is-menu", gameState === GAME_STATE.menu);
   trackPanel.replaceChildren();
 
-  if (!compact) {
-    trackPanel.append(createStartPanel(getDisplayedLeaderboardTrack()));
+  if (gameState === GAME_STATE.menu) {
+    trackPanel.append(createMainMenuPanel());
+    return;
+  }
+
+  if (gameState === GAME_STATE.trackSelect) {
+    trackPanel.append(createRaceTrackPanel());
+    return;
+  }
+
+  if (gameState === GAME_STATE.multiplayer) {
+    trackPanel.append(createMultiplayerPanel());
+    return;
+  }
+
+  if (gameState === GAME_STATE.settings) {
+    trackPanel.append(createSettingsPanel());
     return;
   }
 
@@ -2047,6 +2094,123 @@ function renderTrackSelector() {
   }
 
   trackPanel.append(createLeaderboardPanel(getDisplayedLeaderboardTrack()));
+}
+
+function createMainMenuPanel() {
+  const panel = document.createElement("section");
+  panel.className = "start-panel main-menu-panel";
+
+  const title = document.createElement("strong");
+  title.className = "start-title";
+  title.textContent = "Night Rally";
+
+  const modes = document.createElement("div");
+  modes.className = "mode-grid";
+
+  MAIN_MENU_ITEMS.forEach((item, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "mode-card";
+    button.classList.toggle("is-selected", index === selectedMainMenuIndex);
+    button.addEventListener("click", () => {
+      selectedMainMenuIndex = index;
+      activateMainMenuItem();
+    });
+
+    const name = document.createElement("strong");
+    name.textContent = item.title;
+
+    const detail = document.createElement("span");
+    detail.textContent = item.detail;
+
+    button.append(name, detail);
+    modes.append(button);
+  });
+
+  const controls = document.createElement("span");
+  controls.className = "start-controls";
+  controls.textContent = "方向键 / WASD 选择 · Enter 确认";
+
+  panel.append(title, modes, controls);
+
+  return panel;
+}
+
+function createRaceTrackPanel() {
+  const panel = document.createElement("section");
+  panel.className = "start-panel race-track-panel";
+
+  const title = document.createElement("strong");
+  title.className = "start-title";
+  title.textContent = "竞速模式";
+
+  const hint = createTrackHint();
+
+  const trackList = document.createElement("div");
+  trackList.className = "start-track-list";
+  TRACK_LIST.forEach((candidate) => {
+    trackList.append(createTrackCard(candidate, false));
+  });
+
+  const controls = document.createElement("span");
+  controls.className = "start-controls";
+  controls.textContent = "方向键 / WASD 切换 · Enter 确认 · Esc 返回";
+
+  panel.append(title, hint, trackList, createLeaderboardPanel(getDisplayedLeaderboardTrack()), controls);
+
+  return panel;
+}
+
+function createMultiplayerPanel() {
+  const panel = document.createElement("section");
+  panel.className = "start-panel placeholder-panel";
+
+  const title = document.createElement("strong");
+  title.className = "start-title";
+  title.textContent = "多人模式";
+
+  const message = document.createElement("p");
+  message.className = "placeholder-message";
+  message.textContent = "待开发";
+
+  const controls = document.createElement("span");
+  controls.className = "start-controls";
+  controls.textContent = "Esc / Backspace 返回";
+
+  panel.append(title, message, controls);
+
+  return panel;
+}
+
+function createSettingsPanel() {
+  const panel = document.createElement("section");
+  panel.className = "start-panel settings-panel";
+
+  const title = document.createElement("strong");
+  title.className = "start-title";
+  title.textContent = "设置";
+
+  const profileTitle = document.createElement("span");
+  profileTitle.className = "settings-section-title";
+  profileTitle.textContent = "车手档案";
+
+  const displayTitle = document.createElement("span");
+  displayTitle.className = "settings-section-title";
+  displayTitle.textContent = "显示数据";
+
+  const display = document.createElement("button");
+  display.type = "button";
+  display.className = "settings-toggle";
+  display.textContent = advancedHudVisible ? "已开启" : "已关闭";
+  display.addEventListener("click", toggleAdvancedHud);
+
+  const controls = document.createElement("span");
+  controls.className = "start-controls";
+  controls.textContent = "Esc / Backspace 返回";
+
+  panel.append(title, profileTitle, createPlayerProfilePanel(), displayTitle, display, controls);
+
+  return panel;
 }
 
 function createStartPanel(track) {
@@ -2465,6 +2629,14 @@ function isTrackSelectionMode() {
   return gameState === GAME_STATE.trackSelect;
 }
 
+function isMenuOverlayMode() {
+  return gameState === GAME_STATE.menu
+    || gameState === GAME_STATE.trackSelect
+    || gameState === GAME_STATE.recordSelect
+    || gameState === GAME_STATE.multiplayer
+    || gameState === GAME_STATE.settings;
+}
+
 function openTrackSelection() {
   setGameState(GAME_STATE.trackSelect);
   selectedTrackId = activeTrackId;
@@ -2472,6 +2644,88 @@ function openTrackSelection() {
   updateTrackSelector(true);
   updateHud(HUD_UPDATE_INTERVAL_S, true);
   draw();
+}
+
+function openMainMenu() {
+  keys.clear();
+  setGameState(GAME_STATE.menu);
+  updateResultPanel();
+  updateTrackSelector(true);
+  updateHud(HUD_UPDATE_INTERVAL_S, true);
+  draw();
+}
+
+function handleMenuOverlayKey(event) {
+  if (gameState === GAME_STATE.menu) {
+    return handleMainMenuKey(event);
+  }
+
+  if (gameState === GAME_STATE.trackSelect) {
+    return handleTrackSelectionKey(event);
+  }
+
+  if (event.code === "Escape" || event.code === "Backspace" || event.code === "Enter" || event.code === "Space") {
+    openMainMenu();
+    return true;
+  }
+
+  return false;
+}
+
+function handleMainMenuKey(event) {
+  if (event.code === "ArrowUp" || event.code === "KeyW" || event.code === "ArrowLeft" || event.code === "KeyA") {
+    moveMainMenuSelection(-1);
+    return true;
+  }
+
+  if (event.code === "ArrowDown" || event.code === "KeyS" || event.code === "ArrowRight" || event.code === "KeyD") {
+    moveMainMenuSelection(1);
+    return true;
+  }
+
+  if (event.code === "Enter" || event.code === "Space") {
+    activateMainMenuItem();
+    return true;
+  }
+
+  return false;
+}
+
+function moveMainMenuSelection(direction) {
+  selectedMainMenuIndex = wrapIndex(selectedMainMenuIndex + direction, MAIN_MENU_ITEMS.length);
+  updateTrackSelector(true);
+}
+
+function activateMainMenuItem() {
+  const item = MAIN_MENU_ITEMS[selectedMainMenuIndex];
+
+  if (item?.id === "practice") {
+    startPracticeMode();
+    return;
+  }
+
+  if (item?.id === "race") {
+    openTrackSelection();
+    return;
+  }
+
+  if (item?.id === "multiplayer") {
+    setGameState(GAME_STATE.multiplayer);
+    updateTrackSelector(true);
+    updateHud(HUD_UPDATE_INTERVAL_S, true);
+    return;
+  }
+
+  if (item?.id === "settings") {
+    setGameState(GAME_STATE.settings);
+    updateTrackSelector(true);
+    updateHud(HUD_UPDATE_INTERVAL_S, true);
+  }
+}
+
+function startPracticeMode() {
+  const practiceTrackId = defaultTrackId ?? activeTrackId;
+  confirmTrackSelection(practiceTrackId);
 }
 
 function confirmTrackSelection(trackId = selectedTrackId) {
@@ -2508,6 +2762,11 @@ function restartCurrentTrack() {
 }
 
 function handleTrackSelectionKey(event) {
+  if (event.code === "Escape" || event.code === "Backspace") {
+    openMainMenu();
+    return true;
+  }
+
   if (event.code === "ArrowUp" || event.code === "KeyW") {
     moveTrackSelection(-1);
     return true;
@@ -2825,9 +3084,10 @@ function applyTrackData(data) {
 
   TRACK_LIST = data.tracks.map(normalizeTrack);
   TRACKS = Object.fromEntries(TRACK_LIST.map((track) => [track.id, track]));
-  activeTrackId = TRACKS[data.default] ? data.default : TRACK_LIST[0].id;
+  defaultTrackId = TRACKS[data.default] ? data.default : TRACK_LIST[0].id;
+  activeTrackId = defaultTrackId;
   selectedTrackId = activeTrackId;
-  setGameState(GAME_STATE.trackSelect);
+  setGameState(GAME_STATE.menu);
   applyTrackToWorld(getActiveTrack());
   renderTrackSelector();
 }
