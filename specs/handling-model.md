@@ -246,6 +246,25 @@ moveAngleRadNext =
     * (1 - exp(-followRate * dt))
 ```
 
+变量含义：
+
+```txt
+baseFollow       基础追随速度, 1/s
+recoverFollow    反打救车时追加的追随速度, 1/s
+straightenFollow 松开方向时追加的回正追随速度, 1/s
+followRate       本帧最终追随速度, 1/s
+angleDelta       车头方向和行进方向之间的最短角度差, rad
+```
+
+`baseFollow` 按 `driftAmountNext` 在正常抓地和侧滑之间插值：
+
+- `driftAmountNext = 0` 时接近 `handling.tires.follow`，行进方向更快追车头，车辆更稳。
+- `driftAmountNext = 1` 时接近 `handling.tires.slide_follow`，行进方向更慢追车头，车辆更容易保持横滑。
+
+`recoverFollow` 只在反打时生效，用于让玩家可以把已经甩出去的车尾救回来。`straightenFollow` 只在几乎没有方向输入时生效，用于松开方向后自然回稳。
+
+`1 - exp(-followRate * dt)` 是帧率稳定的追随比例。`followRate` 越大，本帧 `moveAngleRad` 越接近 `bodyAngleRadNext`；`followRate` 越小，车辆越保留原来的行进方向。
+
 ## 掉速和油门效率
 
 抓地转向会有轻微速度损失；侧滑会有明显速度损失，并削弱油门效率。这样点按方向仍然可控，持续压方向会慢慢丢速度，进入漂移后会丢更多速度。
@@ -368,16 +387,46 @@ emitDriftTrail =
 
 默认弯道地图使用原创封闭赛道，不复刻真实赛道；节奏参考技术型 16 弯赛道：长直道、发卡、连续中低速弯和回头弯。当前中心线长度目标约 3200 m。
 
-赛道按车辆到中心线的距离分层：
+赛道按车辆到中心线的距离分层。当前实现已经取消可借路肩，赛道数据里的 `curbWidth` 保持为 `0`，跑道边缘外直接进入草地：
 
 ```txt
 road   沥青主路面，正常抓地和速度上限
-curb   可借路肩，进入时速度降到 95%，加速能力为 100%，并轻微降低转向效率
-grass  草坪缓冲区，进入时速度降到 90%，加速能力为 80%，并降低转向效率
+grass  草坪缓冲区，压得越深惩罚越强
 fence  草坪外侧栅栏，限制车辆离开赛道区域
 ```
 
-地表影响分两段：进入低抓地地表时做一次速度比例缩减；停留在地表上时降低油门加速能力。地表不改变刹车减速能力。车辆回到主路面后，加速能力恢复到 100%，油门可以重新把速度拉上来：
+草地惩罚不按“进入草地/不进入草地”的二值状态计算，而是按车辆出线程度渐进计算。这样只压一点草地时速度损失较小，整车深入草地并接近外侧边界时才接近最大惩罚。
+
+当前计算输入：
+
+```txt
+distance          车辆中心到赛道中心线的横向距离
+carHalfWidth      半车宽
+roadHalfWidth     主路面半宽
+grassWidth        草地缓冲宽度
+outsideWheelDepth max(0, distance + carHalfWidth - roadHalfWidth)
+```
+
+惩罚强度：
+
+```txt
+carOffRoad =
+  clamp(outsideWheelDepth / carWidth, 0, 1)
+
+grassDepth =
+  clamp(outsideWheelDepth / grassWidth, 0, 1)
+
+penalty =
+  carOffRoad * smoothstep(0, 1, grassDepth)
+```
+
+`penalty` 范围是 `0..1`：
+
+- `0`：车辆完全在主路面内。
+- 接近 `0`：只有外侧轮轻微压草，速度损失很小。
+- 接近 `1`：车辆基本离开主路并深入草地，接近最大惩罚。
+
+地表影响分两段：进入更低抓地状态时做一次速度比例缩减；停留在草地上时降低油门加速能力和转向效率。地表不改变刹车减速能力。车辆回到主路面后，加速能力恢复到 100%，油门可以重新把速度拉上来：
 
 ```txt
 steerInputNext =
@@ -389,6 +438,14 @@ if surface.speedDropScale < previousSurface.speedDropScale:
 
 throttleScale =
   throttleScale * surface.accelScale
+```
+
+草地最大惩罚由代码参数控制：
+
+```txt
+speedDropScale = lerp(1.0, 0.5, penalty)
+accelScale     = lerp(1.0, 0.65, penalty)
+steer          = lerp(1.0, 0.82, penalty)
 ```
 
 重刹痕迹只在前进速度为正且按刹车时触发；倒车不会产生刹车痕迹。
