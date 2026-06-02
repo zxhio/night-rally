@@ -61,6 +61,12 @@ const GAME_STATE = {
   finishCoast: "finish_coast",
   result: "result",
 };
+const INPUT_ACTIONS = {
+  accelerate: ["KeyW", "ArrowUp"],
+  brake: ["KeyS", "ArrowDown"],
+  steerLeft: ["KeyA", "ArrowLeft"],
+  steerRight: ["KeyD", "ArrowRight"],
+};
 const LAP_PROGRESS_JUMP_BUFFER_M = 18;
 const LAP_FINISH_LINE_WINDOW_M = 90;
 const DEFAULT_LAP_CHECKPOINT_COUNT = 4;
@@ -160,6 +166,8 @@ let lapFinishVx = 0;
 let lapFinishVy = 0;
 let finishRecorded = false;
 let lastFinishResult = null;
+let inputTick = 0;
+let inputFrame = createEmptyInputFrame();
 let hudUpdateAccumulator = HUD_UPDATE_INTERVAL_S;
 let thumbnailUpdateAccumulator = THUMBNAIL_UPDATE_INTERVAL_S;
 const skidMarks = [];
@@ -232,7 +240,7 @@ function update(dt) {
     return;
   }
 
-  const input = readInput();
+  const input = readInputFrame();
   if (gameState === GAME_STATE.result && hasTimedRunTrack()) {
     holdFinishedLap(dt);
     return;
@@ -759,16 +767,35 @@ function drawSkidMarks() {
   ctx.restore();
 }
 
-function readInput() {
-  const up = keys.has("KeyW") || keys.has("ArrowUp");
-  const down = keys.has("KeyS") || keys.has("ArrowDown");
-  const left = keys.has("KeyA") || keys.has("ArrowLeft");
-  const right = keys.has("KeyD") || keys.has("ArrowRight");
-
+function createEmptyInputFrame() {
   return {
-    throttle: Number(up) - Number(down),
-    steer: Number(right) - Number(left),
+    tick: 0,
+    throttle: 0,
+    steer: 0,
+    accelerate: false,
+    brake: false,
+    steerLeft: false,
+    steerRight: false,
   };
+}
+
+function readInputFrame() {
+  inputTick += 1;
+  inputFrame = {
+    tick: inputTick,
+    accelerate: isInputActionPressed("accelerate"),
+    brake: isInputActionPressed("brake"),
+    steerLeft: isInputActionPressed("steerLeft"),
+    steerRight: isInputActionPressed("steerRight"),
+  };
+  inputFrame.throttle = Number(inputFrame.accelerate) - Number(inputFrame.brake);
+  inputFrame.steer = Number(inputFrame.steerRight) - Number(inputFrame.steerLeft);
+
+  return inputFrame;
+}
+
+function isInputActionPressed(action) {
+  return INPUT_ACTIONS[action].some((code) => keys.has(code));
 }
 
 function updateSteeringInput(current, target, dt) {
@@ -1702,6 +1729,7 @@ function resetCar() {
   car.vx = 0;
   car.vy = 0;
   steeringInput = 0;
+  resetInputStream();
   testTime = 0;
   testDistance = 0;
   testActive = false;
@@ -1719,6 +1747,11 @@ function resetCar() {
   camera.y = car.y;
   updateHud(HUD_UPDATE_INTERVAL_S, true);
   draw();
+}
+
+function resetInputStream() {
+  inputTick = 0;
+  inputFrame = createEmptyInputFrame();
 }
 
 function resetLapMode() {

@@ -72,6 +72,31 @@ moveAngleRadNext              ← 行进方向追随车头
 xMNext, yMNext                ← 沿 moveAngleRadNext 积分
 ```
 
+## 输入快照
+
+键盘输入先转换成每个逻辑帧的输入快照。后续回放、Ghost 和多人同步都应该消费同样结构，而不是直接读取键盘状态。
+
+```txt
+inputFrame.tick          本地输入帧序号
+inputFrame.accelerate    是否按下油门键
+inputFrame.brake         是否按下刹车/倒车键
+inputFrame.steerLeft     是否按下左转键
+inputFrame.steerRight    是否按下右转键
+inputFrame.throttle      Number(accelerate) - Number(brake), -1..1
+inputFrame.steer         Number(steerRight) - Number(steerLeft), -1..1
+```
+
+当前键位映射：
+
+```txt
+accelerate: W / ArrowUp
+brake:      S / ArrowDown
+steerLeft:  A / ArrowLeft
+steerRight: D / ArrowRight
+```
+
+`inputFrame.tick` 在每次重置车辆时归零。这个 tick 还不是固定步长模拟 tick；固定 tick 会在模拟核心拆分阶段再引入。
+
 ## 转向输入
 
 ```txt
