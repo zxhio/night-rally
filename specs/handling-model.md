@@ -77,9 +77,13 @@ xMNext, yMNext                ← 沿 moveAngleRadNext 积分
 ```txt
 update(dt)                         游戏状态分派、结果态/滑行态处理、HUD 和镜头收尾
 updateDrivingSimulation(input, dt) 单帧驾驶模拟：输入、地表、速度、转向、碰撞、完赛判断、轮胎痕迹
+getRenderState()                   从当前模拟状态生成渲染快照
+draw(renderState)                  消费渲染快照绘制 Canvas
 ```
 
 `updateDrivingSimulation` 仍然使用当前全局车辆状态，这是为了保持车感和改动范围稳定。后续拆模拟核心时，再把车辆、赛道采样、完赛规则改成显式 state 输入/输出，并引入固定 tick。
+
+`draw(renderState)` 是渲染层入口。当前部分绘制函数仍读取全局状态，但外层已经开始通过 `renderState` 传入赛道、镜头、车辆和视口；后续 Ghost、多车同屏和多人快照会继续沿这个入口收敛。
 
 ## 输入快照
 

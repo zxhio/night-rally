@@ -227,7 +227,7 @@ function loop(now) {
 
   update(dt);
   if (!isTrackSelectionMode()) {
-    draw();
+    draw(getRenderState());
   }
   requestAnimationFrame(loop);
 }
@@ -352,16 +352,25 @@ function updateDrivingSimulation(input, dt) {
   addSkidMarks(forward, right, moveDirection, trailIntensity, speedAbsKmh);
 }
 
-function draw() {
+function getRenderState() {
+  return {
+    track: getActiveTrack(),
+    camera: { ...camera },
+    car: { ...car },
+    view: { ...view },
+  };
+}
+
+function draw(renderState = getRenderState()) {
   ctx.clearRect(0, 0, view.width, view.height);
 
   ctx.save();
   ctx.translate(view.width / 2, view.height / 2);
-  ctx.scale(camera.zoom, camera.zoom);
-  ctx.translate(-camera.x, -camera.y);
+  ctx.scale(renderState.camera.zoom, renderState.camera.zoom);
+  ctx.translate(-renderState.camera.x, -renderState.camera.y);
 
-  drawWorld();
-  drawTrack();
+  drawWorld(renderState);
+  drawTrack(renderState);
   drawSkidMarks();
   drawCarShadow();
   drawCar();
@@ -369,8 +378,8 @@ function draw() {
   ctx.restore();
 }
 
-function drawWorld() {
-  const track = getActiveTrack();
+function drawWorld(renderState = getRenderState()) {
+  const track = renderState.track;
   const visibleBounds = getVisibleWorldBounds();
 
   ctx.fillStyle = track.background ?? "#b78345";
@@ -424,8 +433,8 @@ function drawDirtTexture(track, visibleBounds) {
   }
 }
 
-function drawTrack() {
-  const track = getActiveTrack();
+function drawTrack(renderState = getRenderState()) {
+  const track = renderState.track;
   if (track.type === "circuit") {
     drawCircuit(track);
     return;
