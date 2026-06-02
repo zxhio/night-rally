@@ -3,6 +3,8 @@ const TRACK_DATA_URL = "data/tracks/index.json?v=20260601-track-data";
 const TRACK_DATA_BASE_URL = "data/tracks/";
 const LEADERBOARD_STORAGE_KEY = "night-rally.leaderboard.v1";
 const REPLAY_STORAGE_KEY = "night-rally.replays.v1";
+const LOCAL_RECORDS_EXPORT_VERSION = 1;
+const LEADERBOARD_RECORD_VERSION = 2;
 const LEADERBOARD_MAX_RECORDS_PER_TRACK = 50;
 const LEADERBOARD_DISPLAY_LIMIT = 20;
 const REPLAY_MAX_RECORDS = 30;
@@ -154,6 +156,7 @@ let selectedTrackId = null;
 let gameState = GAME_STATE.menu;
 let trackSelectorState = "";
 let leaderboardState = "";
+let localRecordsStatus = "";
 let currentSurface = SURFACE.road;
 let previousSurface = SURFACE.road;
 let lapState = LAP_STATE.ready;
@@ -791,8 +794,8 @@ function drawGhostCar() {
 
 function getActiveGhostPose() {
   const track = getActiveTrack();
-  const bestRecord = getLeaderboardRecordsForTrack(track.id).find((record) => record.replayId);
-  const replay = getReplayRecord(bestRecord?.replayId);
+  const bestRecord = getLeaderboardRecordsForTrack(track.id).find((record) => getLeaderboardRecordReplayId(record));
+  const replay = getReplayRecord(getLeaderboardRecordReplayId(bestRecord));
   const timeS = hasLapTrack(track) ? lapTime : testTime;
 
   if (!replay || replay.trackId !== track.id || !Number.isFinite(timeS)) {
@@ -1301,11 +1304,14 @@ function recordFinishTime(track, timeS) {
   captureReplayKeyframe(0, true);
   const replayId = saveReplayCapture(track, timeS);
   const record = {
+    version: LEADERBOARD_RECORD_VERSION,
     trackId: track.id,
     trackName: track.name,
+    carId: getActiveCarId(),
     timeS,
     distanceM: hasLapTrack(track) ? track.lap.lengthM : track.finishDistanceM,
-    replayId,
+    valid: true,
+    replayRef: replayId ? { type: "localStorage", id: replayId } : null,
     createdAt: new Date().toISOString(),
   };
   const result = saveLeaderboardRecord(track.id, record);
@@ -1321,21 +1327,26 @@ function recordFinishTime(track, timeS) {
 function saveLeaderboardRecord(trackId, record) {
   const records = loadLeaderboardRecords();
   const trackRecords = Array.isArray(records[trackId]) ? records[trackId] : [];
+  const normalizedRecord = normalizeLeaderboardRecord(record, trackId);
 
-  const nextRecords = [...trackRecords, record]
+  if (!normalizedRecord) {
+    return {
+      rank: null,
+      total: trackRecords.length,
+    };
+  }
+
+  const nextRecords = [...trackRecords, normalizedRecord]
     .filter(isValidLeaderboardRecord)
     .sort((a, b) => a.timeS - b.timeS)
     .slice(0, LEADERBOARD_MAX_RECORDS_PER_TRACK);
-  const savedRecord = nextRecords.find((candidate) => candidate.createdAt === record.createdAt);
+  const savedRecord = nextRecords.find((candidate) => candidate.createdAt === normalizedRecord.createdAt);
   const rank = savedRecord ? nextRecords.indexOf(savedRecord) + 1 : null;
 
   records[trackId] = nextRecords;
 
-  try {
-    localStorage.setItem(LEADERBOARD_STORAGE_KEY, JSON.stringify(records));
+  if (saveLeaderboardRecords(records)) {
     updateTrackSelector(true);
-  } catch (error) {
-    console.warn("Failed to save leaderboard", error);
   }
 
   return {
@@ -1348,19 +1359,277 @@ function loadLeaderboardRecords() {
   try {
     const parsed = JSON.parse(localStorage.getItem(LEADERBOARD_STORAGE_KEY) ?? "{}");
 
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+    return normalizeLeaderboardStore(parsed);
   } catch (error) {
     console.warn("Failed to load leaderboard", error);
     return {};
   }
 }
 
+function saveLeaderboardRecords(records) {
+  try {
+    localStorage.setItem(LEADERBOARD_STORAGE_KEY, JSON.stringify(records));
+    return true;
+  } catch (error) {
+    console.warn("Failed to save leaderboard", error);
+    return false;
+  }
+}
+
+function normalizeLeaderboardStore(value) {
+  if (Array.isArray(value)) {
+    return normalizeLeaderboardRecordList(value);
+  }
+
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+
+  return Object.fromEntries(Object.entries(value).map(([trackId, records]) => {
+    const normalized = Array.isArray(records)
+      ? records
+        .map((record) => normalizeLeaderboardRecord(record, trackId))
+        .filter(isValidLeaderboardRecord)
+        .sort((a, b) => a.timeS - b.timeS)
+        .slice(0, LEADERBOARD_MAX_RECORDS_PER_TRACK)
+      : [];
+
+    return [trackId, normalized];
+  }));
+}
+
+function normalizeLeaderboardRecordList(records) {
+  const store = {};
+
+  for (const record of records) {
+    const normalized = normalizeLeaderboardRecord(record, record?.trackId);
+    if (!isValidLeaderboardRecord(normalized)) {
+      continue;
+    }
+
+    if (!Array.isArray(store[normalized.trackId])) {
+      store[normalized.trackId] = [];
+    }
+    store[normalized.trackId].push(normalized);
+  }
+
+  return normalizeLeaderboardStore(store);
+}
+
+function normalizeLeaderboardRecord(record, fallbackTrackId) {
+  if (!record || typeof record !== "object" || !Number.isFinite(record.timeS) || record.timeS <= 0) {
+    return null;
+  }
+
+  const trackId = typeof record.trackId === "string" && record.trackId.length > 0 ? record.trackId : fallbackTrackId;
+  if (typeof trackId !== "string" || trackId.length === 0) {
+    return null;
+  }
+
+  const replayId = getLeaderboardRecordReplayId(record);
+
+  return {
+    version: LEADERBOARD_RECORD_VERSION,
+    trackId,
+    trackName: typeof record.trackName === "string" && record.trackName.length > 0
+      ? record.trackName
+      : TRACKS[trackId]?.name ?? trackId,
+    carId: typeof record.carId === "string" && record.carId.length > 0 ? record.carId : getActiveCarId(),
+    timeS: record.timeS,
+    distanceM: Number.isFinite(record.distanceM) ? record.distanceM : null,
+    valid: record.valid !== false,
+    replayRef: replayId ? { type: "localStorage", id: replayId } : null,
+    createdAt: typeof record.createdAt === "string" ? record.createdAt : new Date().toISOString(),
+  };
+}
+
 function isValidLeaderboardRecord(record) {
   return record
     && typeof record === "object"
+    && record.version === LEADERBOARD_RECORD_VERSION
+    && typeof record.trackId === "string"
+    && typeof record.carId === "string"
     && Number.isFinite(record.timeS)
     && record.timeS > 0
+    && record.valid === true
     && typeof record.createdAt === "string";
+}
+
+function getLeaderboardRecordReplayId(record) {
+  if (!record || typeof record !== "object") {
+    return null;
+  }
+
+  if (record.replayRef && typeof record.replayRef === "object" && typeof record.replayRef.id === "string") {
+    return record.replayRef.id;
+  }
+
+  return typeof record.replayId === "string" ? record.replayId : null;
+}
+
+function createLocalRecordsExport() {
+  return {
+    type: "night-rally.local-records",
+    version: LOCAL_RECORDS_EXPORT_VERSION,
+    exportedAt: new Date().toISOString(),
+    leaderboardVersion: LEADERBOARD_RECORD_VERSION,
+    replayVersion: 1,
+    leaderboard: loadLeaderboardRecords(),
+    replays: loadReplayRecords(),
+  };
+}
+
+function exportLocalRecordsFile() {
+  const snapshot = createLocalRecordsExport();
+  const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `night-rally-records-${formatLocalRecordsFileDate(new Date())}.json`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+  setLocalRecordsStatus(`Exported ${countLeaderboardRecords(snapshot.leaderboard)} records`);
+}
+
+function importLocalRecordsFile() {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "application/json,.json";
+  input.style.display = "none";
+  input.addEventListener("change", async () => {
+    const file = input.files?.[0];
+    if (!file) {
+      input.remove();
+      return;
+    }
+
+    try {
+      const result = importLocalRecordsJson(await file.text());
+      setLocalRecordsStatus(`Imported ${result.recordCount} records`);
+    } catch (error) {
+      console.warn("Failed to import local records", error);
+      setLocalRecordsStatus("Import failed");
+    } finally {
+      input.remove();
+    }
+  }, { once: true });
+
+  document.body.append(input);
+  input.click();
+}
+
+function importLocalRecordsJson(text) {
+  const parsed = JSON.parse(text);
+  const incoming = normalizeLocalRecordsImport(parsed);
+  const leaderboard = mergeLeaderboardStores(loadLeaderboardRecords(), incoming.leaderboard);
+  const replays = mergeReplayRecords(loadReplayRecords(), incoming.replays);
+
+  if (!saveLeaderboardRecords(leaderboard)) {
+    throw new Error("failed to save leaderboard records");
+  }
+
+  if (!saveReplayRecords(replays)) {
+    throw new Error("failed to save replay records");
+  }
+
+  updateTrackSelector(true);
+
+  return {
+    recordCount: countLeaderboardRecords(incoming.leaderboard),
+    replayCount: incoming.replays.length,
+  };
+}
+
+function normalizeLocalRecordsImport(value) {
+  const payload = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const rawLeaderboard = payload.leaderboard ?? payload.records ?? value;
+  const rawReplays = Array.isArray(payload.replays) ? payload.replays : [];
+
+  return {
+    leaderboard: normalizeLeaderboardStore(rawLeaderboard),
+    replays: rawReplays.filter(isValidReplayRecord),
+  };
+}
+
+function mergeLeaderboardStores(base, incoming) {
+  const trackIds = new Set([...Object.keys(base), ...Object.keys(incoming)]);
+  const merged = {};
+
+  for (const trackId of trackIds) {
+    const byKey = new Map();
+    const records = [
+      ...(Array.isArray(base[trackId]) ? base[trackId] : []),
+      ...(Array.isArray(incoming[trackId]) ? incoming[trackId] : []),
+    ];
+
+    for (const record of records) {
+      const normalized = normalizeLeaderboardRecord(record, trackId);
+      if (isValidLeaderboardRecord(normalized)) {
+        byKey.set(getLeaderboardRecordKey(normalized), normalized);
+      }
+    }
+
+    merged[trackId] = [...byKey.values()]
+      .sort((a, b) => a.timeS - b.timeS)
+      .slice(0, LEADERBOARD_MAX_RECORDS_PER_TRACK);
+  }
+
+  return merged;
+}
+
+function getLeaderboardRecordKey(record) {
+  return [
+    record.trackId,
+    record.carId,
+    record.createdAt,
+    record.timeS.toFixed(3),
+    getLeaderboardRecordReplayId(record) ?? "",
+  ].join("|");
+}
+
+function countLeaderboardRecords(records) {
+  return Object.values(records).reduce((total, trackRecords) => (
+    total + (Array.isArray(trackRecords) ? trackRecords.length : 0)
+  ), 0);
+}
+
+function mergeReplayRecords(base, incoming) {
+  const byId = new Map();
+
+  for (const replay of [...base, ...incoming]) {
+    if (isValidReplayRecord(replay)) {
+      byId.set(replay.id, replay);
+    }
+  }
+
+  return [...byId.values()]
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, REPLAY_MAX_RECORDS);
+}
+
+function saveReplayRecords(replays) {
+  try {
+    localStorage.setItem(REPLAY_STORAGE_KEY, JSON.stringify(replays.slice(0, REPLAY_MAX_RECORDS)));
+    return true;
+  } catch (error) {
+    console.warn("Failed to save replays", error);
+    return false;
+  }
+}
+
+function setLocalRecordsStatus(message) {
+  localRecordsStatus = message;
+  updateTrackSelector(true);
+}
+
+function formatLocalRecordsFileDate(date) {
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("");
 }
 
 function createEmptyReplayCapture() {
@@ -1445,13 +1714,11 @@ function saveReplayCapture(track, timeS) {
     .filter((candidate) => isValidReplayRecord(candidate) && candidate.id !== replay.id);
   replays.unshift(replay);
 
-  try {
-    localStorage.setItem(REPLAY_STORAGE_KEY, JSON.stringify(replays.slice(0, REPLAY_MAX_RECORDS)));
-  } catch (error) {
-    console.warn("Failed to save replay", error);
+  const saved = saveReplayRecords(replays);
+  replayCapture = createEmptyReplayCapture();
+
+  if (!saved) {
     return null;
-  } finally {
-    replayCapture = createEmptyReplayCapture();
   }
 
   return replay.id;
@@ -1627,6 +1894,7 @@ function updateTrackSelector(force = false) {
     isTrackSelectionMode() ? "select" : "compact",
     leaderboardTrackId,
     leaderboardState,
+    localRecordsStatus,
   ].join(":");
   if (!force && nextState === trackSelectorState) {
     return;
@@ -1680,8 +1948,43 @@ function createLeaderboardPanel(track) {
   }
 
   panel.append(list);
+  panel.append(createLocalRecordsTools());
 
   return panel;
+}
+
+function createLocalRecordsTools() {
+  const tools = document.createElement("div");
+  tools.className = "local-records-tools";
+
+  const exportButton = document.createElement("button");
+  exportButton.type = "button";
+  exportButton.className = "local-records-action";
+  exportButton.textContent = "Export";
+  exportButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    exportLocalRecordsFile();
+  });
+
+  const importButton = document.createElement("button");
+  importButton.type = "button";
+  importButton.className = "local-records-action";
+  importButton.textContent = "Import";
+  importButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    importLocalRecordsFile();
+  });
+
+  tools.append(exportButton, importButton);
+
+  if (localRecordsStatus) {
+    const status = document.createElement("span");
+    status.className = "local-records-status";
+    status.textContent = localRecordsStatus;
+    tools.append(status);
+  }
+
+  return tools;
 }
 
 function updateResultPanel() {
@@ -1725,8 +2028,8 @@ function updateResultPanel() {
   replay.type = "button";
   replay.className = "result-action";
   replay.textContent = "Replay";
-  replay.disabled = !lastFinishResult.replayId;
-  replay.addEventListener("click", () => startReplayPlayback(lastFinishResult.replayId));
+  replay.disabled = !getLeaderboardRecordReplayId(lastFinishResult);
+  replay.addEventListener("click", () => startReplayPlayback(getLeaderboardRecordReplayId(lastFinishResult)));
 
   const select = document.createElement("button");
   select.type = "button";
@@ -2562,6 +2865,10 @@ function hasStraightFinish(track = getActiveTrack()) {
 
 function hasTimedRunTrack(track = getActiveTrack()) {
   return hasLapTrack(track) || hasStraightFinish(track);
+}
+
+function getActiveCarId() {
+  return typeof vehicleModel?.id === "string" && vehicleModel.id.length > 0 ? vehicleModel.id : "baseline";
 }
 
 function isSessionStarted() {
