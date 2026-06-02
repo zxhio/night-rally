@@ -191,6 +191,8 @@ let defaultTrackId = null;
 let gameState = GAME_STATE.menu;
 let trackSelectorState = "";
 let selectedMainMenuIndex = 0;
+let selectedRecordIndex = 0;
+let selectedGhostReplayId = null;
 let leaderboardState = "";
 let localRecordsStatus = "";
 let playerProfile = loadPlayerProfile();
@@ -2078,6 +2080,11 @@ function renderTrackSelector() {
     return;
   }
 
+  if (gameState === GAME_STATE.recordSelect) {
+    trackPanel.append(createRecordSelectionPanel());
+    return;
+  }
+
   if (gameState === GAME_STATE.multiplayer) {
     trackPanel.append(createMultiplayerPanel());
     return;
@@ -2149,7 +2156,7 @@ function createRaceTrackPanel() {
   const trackList = document.createElement("div");
   trackList.className = "start-track-list";
   TRACK_LIST.forEach((candidate) => {
-    trackList.append(createTrackCard(candidate, false));
+    trackList.append(createTrackCard(candidate, false, () => openRecordSelection(candidate.id)));
   });
 
   const controls = document.createElement("span");
@@ -2157,6 +2164,54 @@ function createRaceTrackPanel() {
   controls.textContent = "方向键 / WASD 切换 · Enter 确认 · Esc 返回";
 
   panel.append(title, hint, trackList, createLeaderboardPanel(getDisplayedLeaderboardTrack()), controls);
+
+  return panel;
+}
+
+function createRecordSelectionPanel() {
+  const track = TRACKS[selectedTrackId] ?? getActiveTrack();
+  const options = getRecordSelectionOptions(track.id);
+  selectedRecordIndex = clamp(selectedRecordIndex, 0, options.length - 1);
+
+  const panel = document.createElement("section");
+  panel.className = "start-panel record-panel";
+
+  const title = document.createElement("strong");
+  title.className = "start-title";
+  title.textContent = "选择记录";
+
+  const trackName = document.createElement("span");
+  trackName.className = "start-track";
+  trackName.textContent = `${track.name} · ${track.displayLength}`;
+
+  const list = document.createElement("div");
+  list.className = "record-list";
+
+  options.forEach((option, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "record-card";
+    button.classList.toggle("is-selected", index === selectedRecordIndex);
+    button.addEventListener("click", () => {
+      selectedRecordIndex = index;
+      confirmRecordSelection();
+    });
+
+    const label = document.createElement("strong");
+    label.textContent = option.label;
+
+    const detail = document.createElement("span");
+    detail.textContent = option.detail;
+
+    button.append(label, detail);
+    list.append(button);
+  });
+
+  const controls = document.createElement("span");
+  controls.className = "start-controls";
+  controls.textContent = "↑↓ 选择 · Enter 开跑 · Esc 返回地图";
+
+  panel.append(title, trackName, list, controls);
 
   return panel;
 }
@@ -2272,7 +2327,7 @@ function createStartPanel(track) {
   return panel;
 }
 
-function createTrackCard(track, disabled) {
+function createTrackCard(track, disabled, onSelect = confirmTrackSelection) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "track-card";
@@ -2280,7 +2335,7 @@ function createTrackCard(track, disabled) {
   button.disabled = disabled;
   button.classList.toggle("is-active", track.id === activeTrackId);
   button.classList.toggle("is-selected", track.id === selectedTrackId);
-  button.addEventListener("click", () => confirmTrackSelection(track.id));
+  button.addEventListener("click", () => onSelect(track.id));
 
   const thumb = document.createElement("canvas");
   thumb.className = "track-thumb";
@@ -2332,7 +2387,9 @@ function updateTrackSelector(force = false) {
   const nextState = [
     activeTrackId,
     selectedTrackId,
-    isTrackSelectionMode() ? "select" : "compact",
+    gameState,
+    selectedRecordIndex,
+    selectedGhostReplayId ?? "",
     leaderboardTrackId,
     leaderboardState,
     localRecordsStatus,
@@ -2579,7 +2636,9 @@ function updateControlHint() {
 }
 
 function getDisplayedLeaderboardTrack() {
-  return isTrackSelectionMode() ? TRACKS[selectedTrackId] : getActiveTrack();
+  return gameState === GAME_STATE.trackSelect || gameState === GAME_STATE.recordSelect
+    ? TRACKS[selectedTrackId]
+    : getActiveTrack();
 }
 
 function getLeaderboardRecordsForTrack(trackId) {
@@ -2637,9 +2696,10 @@ function isMenuOverlayMode() {
     || gameState === GAME_STATE.settings;
 }
 
-function openTrackSelection() {
+function openTrackSelection(trackId = activeTrackId) {
   setGameState(GAME_STATE.trackSelect);
-  selectedTrackId = activeTrackId;
+  selectedTrackId = TRACKS[trackId] ? trackId : activeTrackId;
+  selectedGhostReplayId = null;
   updateResultPanel();
   updateTrackSelector(true);
   updateHud(HUD_UPDATE_INTERVAL_S, true);
@@ -2662,6 +2722,10 @@ function handleMenuOverlayKey(event) {
 
   if (gameState === GAME_STATE.trackSelect) {
     return handleTrackSelectionKey(event);
+  }
+
+  if (gameState === GAME_STATE.recordSelect) {
+    return handleRecordSelectionKey(event);
   }
 
   if (event.code === "Escape" || event.code === "Backspace" || event.code === "Enter" || event.code === "Space") {
@@ -2725,23 +2789,24 @@ function activateMainMenuItem() {
 
 function startPracticeMode() {
   const practiceTrackId = defaultTrackId ?? activeTrackId;
-  confirmTrackSelection(practiceTrackId);
+  startTimedRun(practiceTrackId, null);
 }
 
 function confirmTrackSelection(trackId = selectedTrackId) {
+  startTimedRun(trackId, null);
+}
+
+function startTimedRun(trackId = selectedTrackId, ghostReplayId = null) {
   if (!TRACKS[trackId] || isSessionStarted()) {
     return;
   }
 
   keys.clear();
-
-  if (trackId !== activeTrackId) {
-    activeTrackId = trackId;
-    resetCar();
-  }
-
-  setGameState(GAME_STATE.countdown);
+  activeTrackId = trackId;
   selectedTrackId = trackId;
+  selectedGhostReplayId = ghostReplayId;
+  setGameState(GAME_STATE.countdown);
+  resetCar();
   updateResultPanel();
   updateTrackSelector(true);
   updateHud(HUD_UPDATE_INTERVAL_S, true);
@@ -2778,11 +2843,91 @@ function handleTrackSelectionKey(event) {
   }
 
   if (event.code === "ArrowLeft" || event.code === "ArrowRight" || event.code === "Enter" || event.code === "Space") {
-    confirmTrackSelection();
+    openRecordSelection();
     return true;
   }
 
   return false;
+}
+
+function openRecordSelection(trackId = selectedTrackId) {
+  if (!TRACKS[trackId]) {
+    return;
+  }
+
+  keys.clear();
+  selectedTrackId = trackId;
+  selectedRecordIndex = 0;
+  selectedGhostReplayId = null;
+  setGameState(GAME_STATE.recordSelect);
+  updateTrackSelector(true);
+  updateHud(HUD_UPDATE_INTERVAL_S, true);
+  draw();
+}
+
+function handleRecordSelectionKey(event) {
+  if (event.code === "Escape" || event.code === "Backspace") {
+    openTrackSelection(selectedTrackId);
+    return true;
+  }
+
+  if (event.code === "ArrowUp" || event.code === "KeyW" || event.code === "ArrowLeft" || event.code === "KeyA") {
+    moveRecordSelection(-1);
+    return true;
+  }
+
+  if (event.code === "ArrowDown" || event.code === "KeyS" || event.code === "ArrowRight" || event.code === "KeyD") {
+    moveRecordSelection(1);
+    return true;
+  }
+
+  if (event.code === "Enter" || event.code === "Space") {
+    confirmRecordSelection();
+    return true;
+  }
+
+  return false;
+}
+
+function moveRecordSelection(direction) {
+  const options = getRecordSelectionOptions(selectedTrackId);
+  selectedRecordIndex = wrapIndex(selectedRecordIndex + direction, options.length);
+  updateTrackSelector(true);
+}
+
+function confirmRecordSelection() {
+  const options = getRecordSelectionOptions(selectedTrackId);
+  const option = options[clamp(selectedRecordIndex, 0, options.length - 1)];
+
+  startTimedRun(selectedTrackId, option?.replayId ?? null);
+}
+
+function getRecordSelectionOptions(trackId) {
+  const replaysById = new Map(loadReplayRecords().map((replay) => [replay.id, replay]));
+  const recordOptions = getLeaderboardRecordsForTrack(trackId)
+    .map((record, index) => {
+      const replayId = getLeaderboardRecordReplayId(record);
+      const replay = replaysById.get(replayId);
+      if (!replay) {
+        return null;
+      }
+
+      return {
+        replayId,
+        label: `${String(index + 1).padStart(2, "0")} · ${formatTime(record.timeS)}`,
+        detail: `${record.player.name} · ${formatRecordDate(record.createdAt)}`,
+      };
+    })
+    .filter(Boolean);
+
+  return [
+    {
+      replayId: null,
+      label: "不使用记录",
+      detail: recordOptions.length > 0 ? "独自开跑" : "当前地图还没有可用记录",
+    },
+    ...recordOptions,
+  ];
 }
 
 function moveTrackSelection(direction) {
