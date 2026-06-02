@@ -2217,9 +2217,9 @@ function createMainMenuPanel() {
 
   const controls = document.createElement("span");
   controls.className = "start-controls";
-  controls.textContent = "方向键 / WASD 选择 · Enter 确认";
+  controls.textContent = "↑↓ 切换 · Enter 确认";
 
-  panel.append(title, modes, controls);
+  panel.append(title, controls, modes);
 
   return panel;
 }

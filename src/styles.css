@@ -104,14 +104,14 @@ body {
 
 .mode-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   gap: 8px;
 }
 
 .mode-card {
   display: grid;
   gap: 7px;
-  min-height: 92px;
+  min-height: 68px;
   padding: 12px;
   border: 1px solid rgba(238, 243, 236, 0.14);
   border-radius: 6px;
