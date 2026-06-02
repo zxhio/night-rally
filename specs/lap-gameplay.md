@@ -15,6 +15,7 @@ countdown     已确认赛道，等待第一次给油起跑
 racing        比赛计时中
 finish_coast  完赛后的短暂滑行
 result        完赛结果状态，车辆停止，等待后续重开或返回选择
+replay        本地回放播放状态，只按关键帧驱动画面，不记录新成绩
 ```
 
 当前 `countdown` 还不显示视觉倒计时，只表示赛道已经确认、车辆位于起点、等待玩家起跑。真正倒计时 UI 和起跑节奏在后续 checkpoint 单独实现。
@@ -41,9 +42,14 @@ finish_coast
 
 result
   -> track_select    按 R 重置并返回选择
+  -> replay          点击结果面板 Replay
+
+replay
+  -> result          回放播放结束
+  -> track_select    按 R 重置并返回选择
 ```
 
-`isSessionStarted()` 只在 `racing / finish_coast / result` 返回 true，用于阻止比赛中切换赛道。`track_select` 和 `countdown` 仍允许选择或重新确认赛道。
+`isSessionStarted()` 在 `racing / finish_coast / result / replay` 返回 true，用于阻止比赛中或回放中切换赛道。`track_select` 和 `countdown` 仍允许选择或重新确认赛道。
 
 ## 完赛规则
 
@@ -138,7 +144,7 @@ keyframes[].moveAngleRad
 
 ## Ghost 车
 
-比赛中会读取当前赛道最快有效成绩的 `replayId`。如果能找到对应回放记录，则按当前比赛时间采样关键帧，绘制一个半透明 Ghost 车。
+比赛中会读取当前赛道最快有效成绩的 `replayRef`。如果能找到对应本地回放记录，则按当前比赛时间采样关键帧，绘制一个半透明 Ghost 车。旧成绩里的 `replayId` 会在读取时兼容转换成 `replayRef`。
 
 规则：
 
@@ -151,15 +157,33 @@ keyframes[].moveAngleRad
 每次有效完赛记录一条：
 
 ```txt
+version
 trackId
 trackName
+carId
 timeS
 distanceM
-replayId
+valid
+replayRef.type
+replayRef.id
 createdAt
 ```
 
-同一次完赛只能记录一次。重置并重新开始后可以再次记录。
+字段语义：
+
+```txt
+version         当前为 2
+trackId         赛道 id
+trackName       记录时的赛道显示名
+carId           车辆 id，当前 baseline 车辆为 baseline
+timeS           完赛时间, s
+distanceM       计时距离，环形赛道为单圈长度，直线为 finishDistanceM
+valid           当前只保存 true；以后可用于无效成绩留痕
+replayRef       可选本地回放引用，当前格式为 { type: "localStorage", id }
+createdAt       ISO 时间
+```
+
+同一次完赛只能记录一次。重置并重新开始后可以再次记录。读取旧数据时会把缺少 `version / carId / valid / replayRef` 的记录正规化到当前结构；坏数据会被忽略。
 
 ## 排行榜
 
@@ -169,3 +193,42 @@ createdAt
 - 展示上限：当前赛道最快 Top 20。
 - 排序：按 `timeS` 从小到大。
 - 容错：读取到坏数据时忽略坏记录或回退为空数据。
+
+存储结构按赛道分组：
+
+```txt
+{
+  [trackId]: LeaderboardRecord[]
+}
+```
+
+导入时支持当前分组结构，也支持扁平 `records: LeaderboardRecord[]`。合并时按 `trackId / carId / createdAt / timeS / replayRef` 去重，然后每条赛道只保留最快 50 条。
+
+## 本地记录文件
+
+排行榜面板提供 `Export` / `Import`。运行时仍使用浏览器存储；JSON 文件只作为手动备份、迁移和后续本地文件能力的合同。
+
+导出文件名：
+
+```txt
+night-rally-records-YYYYMMDD.json
+```
+
+导出结构：
+
+```txt
+type                      night-rally.local-records
+version                   当前为 1
+exportedAt                ISO 时间
+leaderboardVersion        当前成绩记录版本，当前为 2
+replayVersion             当前回放记录版本，当前为 1
+leaderboard               同 localStorage 的 night-rally.leaderboard.v1
+replays                   同 localStorage 的 night-rally.replays.v1
+```
+
+导入规则：
+
+- 导入文件会与当前浏览器里的成绩和回放合并，不会先清空本地数据。
+- 成绩按当前排行榜正规化规则过滤、排序和截断。
+- 回放按 `id` 去重，并保留最新 30 条。
+- 导入坏 JSON 或坏结构时不写入，并在面板显示失败状态。

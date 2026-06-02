@@ -30,7 +30,7 @@ http://localhost:5173
 
 完赛后会显示本次成绩和当前赛道排名。按 `Enter` / `Space` 可以重开当前赛道，按 `R` 可以复位并回到赛道选择；结果面板里的 `Replay` 可以播放本次完赛回放。再次比赛时，如果当前赛道有最快成绩回放，会显示半透明 Ghost 车作为参考。
 
-每次有效完赛都会记录一次成绩。右侧赛道面板会显示当前赛道最快 Top 20；成绩保存在当前浏览器的 `localStorage` 中，不会同步到其他设备。
+每次有效完赛都会记录一次成绩。右侧赛道面板会显示当前赛道最快 Top 20；成绩和回放默认保存在当前浏览器的 `localStorage` 中，不会自动同步到其他设备。排行榜面板里的 `Export` / `Import` 可以把本地成绩和回放索引导出或导入为 JSON 文件。
 
 ## 操作
 
@@ -57,6 +57,7 @@ http://localhost:5173
 - 赛道文件：`data/tracks/*.json`
 - 成绩存储：浏览器 `localStorage` 的 `night-rally.leaderboard.v1`
 - 回放存储：浏览器 `localStorage` 的 `night-rally.replays.v1`
+- 本地记录文件：排行榜面板导出的 `night-rally-records-YYYYMMDD.json`
 
 新增赛道时，在 `data/tracks/` 新建赛道 JSON，再把它加入 `data/tracks/index.json`。
 
