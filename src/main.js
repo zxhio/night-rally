@@ -120,6 +120,8 @@ const speedEl = document.querySelector("#speed");
 const accelEl = document.querySelector("#accel");
 const timeEl = document.querySelector("#time");
 const distanceEl = document.querySelector("#distance");
+const hudEl = document.querySelector(".hud");
+const hudHintEl = document.querySelector("#hud-hint");
 const steerEl = document.querySelector("#steer");
 const slipEl = document.querySelector("#slip");
 const driftEl = document.querySelector("#drift");
@@ -187,10 +189,16 @@ let replayCapture = createEmptyReplayCapture();
 let replayPlayback = null;
 let hudUpdateAccumulator = HUD_UPDATE_INTERVAL_S;
 let thumbnailUpdateAccumulator = THUMBNAIL_UPDATE_INTERVAL_S;
+let advancedHudVisible = false;
 const skidMarks = [];
 
 window.addEventListener("keydown", (event) => {
   if (!activeTrackId) {
+    return;
+  }
+
+  if (event.code === "KeyH" && !isTextEntryTarget(event)) {
+    toggleAdvancedHud();
     return;
   }
 
@@ -3147,6 +3155,23 @@ function isSessionStarted() {
     || gameState === GAME_STATE.finishCoast
     || gameState === GAME_STATE.result
     || gameState === GAME_STATE.replay;
+}
+
+function toggleAdvancedHud() {
+  advancedHudVisible = !advancedHudVisible;
+  hudEl?.classList.toggle("is-advanced", advancedHudVisible);
+  if (hudHintEl) {
+    hudHintEl.textContent = advancedHudVisible ? "H 隐藏数据" : "H 显示数据";
+  }
+}
+
+function isTextEntryTarget(event) {
+  const target = event.target;
+
+  return target instanceof HTMLInputElement
+    || target instanceof HTMLTextAreaElement
+    || target instanceof HTMLSelectElement
+    || target?.isContentEditable === true;
 }
 
 function setGameState(nextState) {

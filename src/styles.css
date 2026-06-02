@@ -487,6 +487,28 @@ body {
   font-size: 15px;
 }
 
+.metric-advanced {
+  display: none;
+}
+
+.hud.is-advanced .metric-advanced {
+  display: grid;
+}
+
+.hud-hint {
+  align-self: center;
+  min-height: 24px;
+  padding: 5px 8px;
+  border: 1px solid rgba(238, 243, 236, 0.1);
+  border-radius: 5px;
+  background: rgba(12, 15, 14, 0.52);
+  color: rgba(238, 243, 236, 0.54);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
 .metric-debug {
   display: none;
 }
