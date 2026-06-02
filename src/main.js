@@ -2329,14 +2329,14 @@ function createTrackActionPanel() {
 function createRecordSelectionPanel() {
   const track = TRACKS[selectedTrackId] ?? getActiveTrack();
   const options = getRecordSelectionOptions(track.id);
-  selectedRecordIndex = clamp(selectedRecordIndex, 0, options.length - 1);
+  selectedRecordIndex = options.length > 0 ? clamp(selectedRecordIndex, 0, options.length - 1) : 0;
 
   const panel = document.createElement("section");
   panel.className = "start-panel record-panel";
 
   const title = document.createElement("strong");
   title.className = "start-title";
-  title.textContent = "选择记录";
+  title.textContent = "挑战记录";
 
   const trackName = document.createElement("span");
   trackName.className = "start-track";
@@ -2345,29 +2345,36 @@ function createRecordSelectionPanel() {
   const list = document.createElement("div");
   list.className = "record-list";
 
-  options.forEach((option, index) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "record-card";
-    button.classList.toggle("is-selected", index === selectedRecordIndex);
-    button.addEventListener("click", () => {
-      selectedRecordIndex = index;
-      confirmRecordSelection();
+  if (options.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "record-empty";
+    empty.textContent = "当前地图还没有可挑战记录";
+    list.append(empty);
+  } else {
+    options.forEach((option, index) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "record-card";
+      button.classList.toggle("is-selected", index === selectedRecordIndex);
+      button.addEventListener("click", () => {
+        selectedRecordIndex = index;
+        confirmRecordSelection();
+      });
+
+      const label = document.createElement("strong");
+      label.textContent = option.label;
+
+      const detail = document.createElement("span");
+      detail.textContent = option.detail;
+
+      button.append(label, detail);
+      list.append(button);
     });
-
-    const label = document.createElement("strong");
-    label.textContent = option.label;
-
-    const detail = document.createElement("span");
-    detail.textContent = option.detail;
-
-    button.append(label, detail);
-    list.append(button);
-  });
+  }
 
   const controls = document.createElement("span");
   controls.className = "start-controls";
-  controls.textContent = "↑↓ 选择 · Enter 开跑 · Esc 返回地图";
+  controls.textContent = options.length > 0 ? "↑↓ 选择 · Enter 挑战 · Esc 返回" : "Esc 返回";
 
   panel.append(title, trackName, list, controls);
 
@@ -2716,7 +2723,7 @@ function createLocalRecordsTools() {
   const exportButton = document.createElement("button");
   exportButton.type = "button";
   exportButton.className = "local-records-action";
-  exportButton.textContent = "Export";
+  exportButton.textContent = "导出";
   exportButton.addEventListener("click", (event) => {
     event.stopPropagation();
     exportLocalRecordsFile();
@@ -2725,7 +2732,7 @@ function createLocalRecordsTools() {
   const importButton = document.createElement("button");
   importButton.type = "button";
   importButton.className = "local-records-action";
-  importButton.textContent = "Import";
+  importButton.textContent = "导入";
   importButton.addEventListener("click", (event) => {
     event.stopPropagation();
     importLocalRecordsFile();
@@ -3197,6 +3204,10 @@ function handleRecordToolsKey(event) {
 
 function moveRecordSelection(direction) {
   const options = getRecordSelectionOptions(selectedTrackId);
+  if (options.length === 0) {
+    return;
+  }
+
   selectedRecordIndex = wrapIndex(selectedRecordIndex + direction, options.length);
   updateTrackSelector(true);
 }
@@ -3204,8 +3215,11 @@ function moveRecordSelection(direction) {
 function confirmRecordSelection() {
   const options = getRecordSelectionOptions(selectedTrackId);
   const option = options[clamp(selectedRecordIndex, 0, options.length - 1)];
+  if (!option?.replayId) {
+    return;
+  }
 
-  startTimedRun(selectedTrackId, option?.replayId ?? null);
+  startTimedRun(selectedTrackId, option.replayId);
 }
 
 function getRecordSelectionOptions(trackId) {
@@ -3226,14 +3240,7 @@ function getRecordSelectionOptions(trackId) {
     })
     .filter(Boolean);
 
-  return [
-    {
-      replayId: null,
-      label: "不使用记录",
-      detail: recordOptions.length > 0 ? "独自开跑" : "当前地图还没有可用记录",
-    },
-    ...recordOptions,
-  ];
+  return recordOptions;
 }
 
 function moveTrackSelection(direction) {
