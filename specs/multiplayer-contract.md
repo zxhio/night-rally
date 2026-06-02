@@ -189,3 +189,172 @@ LeaderboardRecord         -> ResultReport 子集
 ```
 
 当前单机仍使用浏览器 `localStorage`。多人实现前，不应为了这个合同引入服务端、账号、构建流程或新依赖。
+
+## 实时多人原型方案
+
+第一版原型只验证“同一房间内多车可见、能跑完、成绩可信度可解释”。不追求正式匹配、账号、观战、断线重连和全球低延迟。
+
+### 拓扑
+
+```txt
+Browser Client  <-- WebSocket -->  Room Server
+```
+
+服务端职责：
+
+- 创建和关闭房间。
+- 分配 `roomId / player.id`。
+- 接收、排序和缓存输入包。
+- 以固定 tick 推进权威模拟。
+- 广播权威快照。
+- 判定完赛和成绩有效性。
+
+客户端职责：
+
+- 读取键盘并生成 InputPacket。
+- 本地预测自己的车辆。
+- 插值渲染远端车辆。
+- 根据权威快照平滑纠正本地状态。
+- 展示服务端确认的成绩。
+
+### 房间流程
+
+```txt
+connect
+  -> join_room
+  -> room_state(lobby)
+  -> ready
+  -> countdown
+  -> racing
+  -> result_confirmed
+  -> room_state(finished)
+```
+
+消息：
+
+```txt
+join_room       client -> server, 带 playerProfile、trackId 或 roomId
+room_state      server -> client, 当前房间全量状态
+ready           client -> server, 玩家准备
+start_countdown server -> client, 服务端指定 startTick
+input           client -> server, 批量输入帧
+snapshot        server -> client, 权威状态
+result_report   server -> client, 服务端确认成绩
+leave_room      client -> server
+error           server -> client
+```
+
+`start_countdown.startTick` 是服务端未来 tick。客户端收到后把本地比赛起点对齐到该 tick；如果网络慢导致已经错过 startTick，客户端立即进入 racing，并从最近快照追上。
+
+### 输入预测
+
+本地玩家：
+
+```txt
+1. 每个渲染帧读取键盘，写入 inputFrame。
+2. 按固定 tick 聚合 inputFrame，生成 InputPacket。
+3. 立即用同一输入推进本地预测状态。
+4. 保存最近 N 个 tick 的输入和预测状态。
+5. 收到服务端 snapshot 后，用 snapshot 覆盖对应 tick 的权威状态。
+6. 从该 tick 之后重放本地输入到当前 tick。
+7. 如果纠正距离很小，插值消除误差；如果过大，直接吸附到权威状态。
+```
+
+建议阈值：
+
+```txt
+softCorrectionDistanceM   0.5
+hardCorrectionDistanceM   4.0
+softCorrectionTimeS       0.12
+inputBufferTicks          120
+```
+
+第一版可以先不做完整回滚重放，只做“本地预测 + 权威快照轻柔拉回”。如果手感明显被拉扯，再引入严格 rollback。
+
+### 远端插值
+
+远端玩家不预测，只插值：
+
+```txt
+renderTime = latestServerTime - interpolationDelay
+```
+
+建议：
+
+```txt
+snapshotRate             20 Hz
+interpolationDelay       100 ms
+maxExtrapolation         150 ms
+```
+
+当快照短暂丢失时，可最多外推 `maxExtrapolation`；超过后保持最后状态，并在 UI 上标记连接质量。
+
+### 服务端权威边界
+
+服务端权威：
+
+- 房间状态。
+- 起跑 tick。
+- 每个玩家的权威车辆状态。
+- 检查点通过顺序。
+- 完赛时间。
+- 成绩 `valid / invalidReason`。
+
+客户端权威：
+
+- 本地输入采集。
+- 本地相机、HUD、音画反馈。
+- 临时预测状态。
+- 非排名用途的本地回放预览。
+
+服务端不应信任客户端提交的 `timeS / lapDistanceM / checkpoint`。客户端可以提交这些字段用于调试，但正式结果必须由服务端模拟或校验得到。
+
+### 成绩校验
+
+最低校验：
+
+```txt
+trackId 匹配房间
+carId 合法
+input tick 单调递增
+检查点顺序完整
+finish tick 来自服务端模拟
+未触发服务端禁止的 reset/debug 行为
+```
+
+增强校验：
+
+```txt
+inputHash 覆盖完整输入流
+replayRef 指向服务端保存的输入流或关键帧
+ResultReport.timeS 由 finishTick - startTick 计算
+LeaderboardRecord 只接受服务端确认的 valid=true
+```
+
+### 延迟和丢包
+
+客户端应显示但不必阻止比赛的网络指标：
+
+```txt
+pingMs
+jitterMs
+packetLossPct
+serverTickDelta
+```
+
+处理策略：
+
+- 输入包允许重复发送最近若干 tick，服务端按 tick 去重。
+- 快照丢包时靠插值缓冲吸收。
+- 客户端落后太多时，服务端发送全量 `room_state`。
+- 玩家短断线时标记 `disconnected`，车辆可以按最后输入滑行或冻结，具体手感后续实测。
+
+### 原型阶段停止条件
+
+如果出现以下情况，先暂停实时多人，回到单机/回放基础修正：
+
+- 固定 tick 模拟还不能从输入稳定复现车辆轨迹。
+- 服务端和客户端同输入下漂移误差持续扩大。
+- 快照纠正明显破坏驾驶手感。
+- 检查点和成绩校验不能在服务端独立判断。
+- 需要账号、部署、持久化服务或构建工具才能继续，而这些尚未单独确认。
