@@ -484,6 +484,13 @@ body {
   white-space: nowrap;
 }
 
+.result-hint {
+  color: rgba(238, 243, 236, 0.46);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.15;
+}
+
 .result-actions {
   display: flex;
   justify-content: end;
@@ -513,6 +520,27 @@ body {
 .result-action.is-secondary {
   min-width: 82px;
   color: rgba(238, 243, 236, 0.64);
+}
+
+.control-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 92px;
+  min-height: 28px;
+  padding: 7px 12px;
+  border: 1px solid rgba(238, 243, 236, 0.14);
+  border-radius: 5px;
+  background: rgba(12, 15, 14, 0.62);
+  color: rgba(238, 243, 236, 0.74);
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.1;
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+
+.control-hint[hidden] {
+  display: none;
 }
 
 .hud {

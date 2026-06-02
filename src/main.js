@@ -132,6 +132,7 @@ const lapStateEl = document.querySelector("#lap-state");
 const lapProgressEl = document.querySelector("#lap-progress");
 const trackPanel = document.querySelector("#track-panel");
 const resultPanel = document.querySelector("#result-panel");
+const controlHintEl = document.querySelector("#control-hint");
 
 const keys = new Set();
 const view = { width: 0, height: 0, dpr: 1 };
@@ -1305,6 +1306,7 @@ function updateHud(dt = HUD_UPDATE_INTERVAL_S, force = false) {
   surfaceEl.textContent = currentSurface.label;
   lapStateEl.textContent = getLapStateLabel();
   lapProgressEl.textContent = `${Math.round(lapProgress * 100)}% lap`;
+  updateControlHint();
   updateTrackSelector();
 
   if (force || thumbnailUpdateAccumulator >= THUMBNAIL_UPDATE_INTERVAL_S) {
@@ -2357,7 +2359,11 @@ function updateResultPanel() {
   playerName.textContent = lastFinishResult.player.name;
 
   player.append(swatch, playerName);
-  summary.append(trackName, time, rank, player);
+  const hint = document.createElement("span");
+  hint.className = "result-hint";
+  hint.textContent = "Enter 再来 · R 换赛道";
+
+  summary.append(trackName, time, rank, player, hint);
 
   const actions = document.createElement("div");
   actions.className = "result-actions";
@@ -2396,6 +2402,16 @@ function formatResultRank(result) {
   const bestLabel = result.isBest ? " · Best" : "";
 
   return `Rank #${result.rank} / ${result.total}${bestLabel}`;
+}
+
+function updateControlHint() {
+  if (!controlHintEl) {
+    return;
+  }
+
+  const message = gameState === GAME_STATE.countdown ? "W / ↑ 加速" : "";
+  controlHintEl.hidden = message.length === 0;
+  controlHintEl.textContent = message;
 }
 
 function getDisplayedLeaderboardTrack() {
