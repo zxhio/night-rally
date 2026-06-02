@@ -4,6 +4,7 @@ const TRACK_DATA_BASE_URL = "data/tracks/";
 const LEADERBOARD_STORAGE_KEY = "night-rally.leaderboard.v1";
 const REPLAY_STORAGE_KEY = "night-rally.replays.v1";
 const PLAYER_PROFILE_STORAGE_KEY = "night-rally.playerProfile.v1";
+const DISPLAY_SETTINGS_STORAGE_KEY = "night-rally.displaySettings.v1";
 const LOCAL_RECORDS_EXPORT_VERSION = 1;
 const LEADERBOARD_RECORD_VERSION = 2;
 const LEADERBOARD_MAX_RECORDS_PER_TRACK = 50;
@@ -106,10 +107,20 @@ const FENCE_COLLISION = {
   driftKeep: 0.25,
 };
 const DEFAULT_PLAYER_PROFILE = {
+  playerId: "legacy-player",
   name: "Player",
   color: "#d64141",
 };
+const DEFAULT_DISPLAY_SETTINGS = {
+  advancedHudVisible: false,
+};
 const PLAYER_COLOR_OPTIONS = ["#d64141", "#2f80ed", "#2fbf71", "#f0b43f", "#b86ff0", "#f46d43"];
+const SETTINGS_ITEM_COUNT = 3;
+const SETTINGS_ITEM = {
+  name: 0,
+  color: 1,
+  display: 2,
+};
 const MAIN_MENU_ITEMS = [
   {
     id: "practice",
@@ -197,6 +208,9 @@ let leaderboardState = "";
 let localRecordsStatus = "";
 let playerProfile = loadPlayerProfile();
 let playerProfileState = getPlayerProfileState();
+let selectedSettingsIndex = SETTINGS_ITEM.name;
+let selectedSettingsColorIndex = getPlayerColorIndex(playerProfile.color);
+let displaySettings = loadDisplaySettings();
 let currentSurface = SURFACE.road;
 let previousSurface = SURFACE.road;
 let lapState = LAP_STATE.ready;
@@ -219,8 +233,10 @@ let replayCapture = createEmptyReplayCapture();
 let replayPlayback = null;
 let hudUpdateAccumulator = HUD_UPDATE_INTERVAL_S;
 let thumbnailUpdateAccumulator = THUMBNAIL_UPDATE_INTERVAL_S;
-let advancedHudVisible = false;
+let advancedHudVisible = displaySettings.advancedHudVisible;
 const skidMarks = [];
+
+applyAdvancedHudVisibility();
 
 window.addEventListener("keydown", (event) => {
   if (!activeTrackId) {
@@ -1532,6 +1548,7 @@ function isValidLeaderboardRecord(record) {
     && typeof record.trackId === "string"
     && typeof record.carId === "string"
     && record.player
+    && typeof record.player.playerId === "string"
     && typeof record.player.name === "string"
     && typeof record.player.color === "string"
     && Number.isFinite(record.timeS)
@@ -1554,15 +1571,25 @@ function getLeaderboardRecordReplayId(record) {
 
 function loadPlayerProfile() {
   try {
-    return normalizePlayerProfile(JSON.parse(localStorage.getItem(PLAYER_PROFILE_STORAGE_KEY) ?? "{}"));
+    const raw = JSON.parse(localStorage.getItem(PLAYER_PROFILE_STORAGE_KEY) ?? "{}");
+    const profile = normalizePlayerProfile(raw, { createMissingId: true });
+    if (profile.playerId !== raw?.playerId) {
+      localStorage.setItem(PLAYER_PROFILE_STORAGE_KEY, JSON.stringify(profile));
+    }
+
+    return profile;
   } catch (error) {
     console.warn("Failed to load player profile", error);
-    return { ...DEFAULT_PLAYER_PROFILE };
+    return normalizePlayerProfile({}, { createMissingId: true });
   }
 }
 
 function savePlayerProfile(nextProfile) {
-  playerProfile = normalizePlayerProfile(nextProfile);
+  playerProfile = normalizePlayerProfile(nextProfile, {
+    createMissingId: true,
+    fallbackPlayerId: playerProfile?.playerId,
+  });
+  selectedSettingsColorIndex = getPlayerColorIndex(playerProfile.color);
 
   try {
     localStorage.setItem(PLAYER_PROFILE_STORAGE_KEY, JSON.stringify(playerProfile));
@@ -1574,15 +1601,38 @@ function savePlayerProfile(nextProfile) {
   updateTrackSelector(true);
 }
 
-function normalizePlayerProfile(value) {
+function normalizePlayerProfile(value, options = {}) {
   const profile = value && typeof value === "object" ? value : {};
+  const fallbackPlayerId = normalizePlayerId(options.fallbackPlayerId);
+  const playerId = normalizePlayerId(profile.playerId)
+    ?? fallbackPlayerId
+    ?? (options.createMissingId ? createPlayerId() : DEFAULT_PLAYER_PROFILE.playerId);
   const name = typeof profile.name === "string" ? profile.name.trim().slice(0, 18) : "";
   const color = normalizeHexColor(profile.color);
 
   return {
+    playerId,
     name: name || DEFAULT_PLAYER_PROFILE.name,
     color: color ?? DEFAULT_PLAYER_PROFILE.color,
   };
+}
+
+function normalizePlayerId(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const playerId = value.trim().slice(0, 80);
+
+  return playerId.length > 0 ? playerId : null;
+}
+
+function createPlayerId() {
+  if (globalThis.crypto?.randomUUID) {
+    return `player-${globalThis.crypto.randomUUID()}`;
+  }
+
+  return `player-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function normalizeHexColor(value) {
@@ -1595,7 +1645,38 @@ function normalizeHexColor(value) {
 }
 
 function getPlayerProfileState() {
-  return `${playerProfile.name}:${playerProfile.color}`;
+  return `${playerProfile.playerId}:${playerProfile.name}:${playerProfile.color}`;
+}
+
+function getPlayerColorIndex(color) {
+  return Math.max(0, PLAYER_COLOR_OPTIONS.indexOf(normalizeHexColor(color) ?? DEFAULT_PLAYER_PROFILE.color));
+}
+
+function loadDisplaySettings() {
+  try {
+    return normalizeDisplaySettings(JSON.parse(localStorage.getItem(DISPLAY_SETTINGS_STORAGE_KEY) ?? "{}"));
+  } catch (error) {
+    console.warn("Failed to load display settings", error);
+    return { ...DEFAULT_DISPLAY_SETTINGS };
+  }
+}
+
+function saveDisplaySettings(nextSettings) {
+  displaySettings = normalizeDisplaySettings(nextSettings);
+
+  try {
+    localStorage.setItem(DISPLAY_SETTINGS_STORAGE_KEY, JSON.stringify(displaySettings));
+  } catch (error) {
+    console.warn("Failed to save display settings", error);
+  }
+}
+
+function normalizeDisplaySettings(value) {
+  const settings = value && typeof value === "object" ? value : {};
+
+  return {
+    advancedHudVisible: settings.advancedHudVisible === true,
+  };
 }
 
 function getCarPaint(color) {
@@ -1931,6 +2012,7 @@ function isValidReplayRecord(replay) {
     && typeof replay.id === "string"
     && typeof replay.trackId === "string"
     && replay.player
+    && typeof replay.player.playerId === "string"
     && typeof replay.player.name === "string"
     && typeof replay.player.color === "string"
     && Array.isArray(replay.inputs)
@@ -2255,12 +2337,16 @@ function createSettingsPanel() {
   const display = document.createElement("button");
   display.type = "button";
   display.className = "settings-toggle";
+  display.classList.toggle("is-selected", selectedSettingsIndex === SETTINGS_ITEM.display);
   display.textContent = advancedHudVisible ? "已开启" : "已关闭";
-  display.addEventListener("click", toggleAdvancedHud);
+  display.addEventListener("click", () => {
+    selectedSettingsIndex = SETTINGS_ITEM.display;
+    toggleAdvancedHud();
+  });
 
   const controls = document.createElement("span");
   controls.className = "start-controls";
-  controls.textContent = "Esc / Backspace 返回";
+  controls.textContent = "↑↓ 选择 · ←→ 调颜色 · Enter 调整 · Esc 返回";
 
   panel.append(title, profileTitle, createPlayerProfilePanel(), displayTitle, display, controls);
 
@@ -2393,6 +2479,9 @@ function updateTrackSelector(force = false) {
     leaderboardState,
     localRecordsStatus,
     playerProfileState,
+    selectedSettingsIndex,
+    selectedSettingsColorIndex,
+    advancedHudVisible ? "hud-on" : "hud-off",
   ].join(":");
   if (!force && nextState === trackSelectorState) {
     return;
@@ -2466,10 +2555,14 @@ function createPlayerProfilePanel() {
 
   const name = document.createElement("input");
   name.className = "player-name-input";
+  name.classList.toggle("is-selected", selectedSettingsIndex === SETTINGS_ITEM.name);
   name.type = "text";
   name.maxLength = 18;
   name.value = playerProfile.name;
   name.setAttribute("aria-label", "Player name");
+  name.addEventListener("focus", () => {
+    selectedSettingsIndex = SETTINGS_ITEM.name;
+  });
   name.addEventListener("keydown", (event) => {
     event.stopPropagation();
     if (event.code === "Enter") {
@@ -2486,14 +2579,17 @@ function createPlayerProfilePanel() {
   const colors = document.createElement("div");
   colors.className = "player-color-list";
 
-  for (const color of PLAYER_COLOR_OPTIONS) {
+  PLAYER_COLOR_OPTIONS.forEach((color, index) => {
     const option = document.createElement("button");
     option.type = "button";
     option.className = "player-color-option";
     option.style.setProperty("--player-color", color);
     option.setAttribute("aria-label", `Use car color ${color}`);
     option.classList.toggle("is-active", color === playerProfile.color);
+    option.classList.toggle("is-selected", selectedSettingsIndex === SETTINGS_ITEM.color && index === selectedSettingsColorIndex);
     option.addEventListener("click", () => {
+      selectedSettingsIndex = SETTINGS_ITEM.color;
+      selectedSettingsColorIndex = index;
       savePlayerProfile({
         ...playerProfile,
         color,
@@ -2501,7 +2597,7 @@ function createPlayerProfilePanel() {
       draw(getRenderState());
     });
     colors.append(option);
-  }
+  });
 
   panel.append(name, colors);
 
@@ -2727,6 +2823,10 @@ function handleMenuOverlayKey(event) {
     return handleRecordSelectionKey(event);
   }
 
+  if (gameState === GAME_STATE.settings) {
+    return handleSettingsKey(event);
+  }
+
   if (event.code === "Escape" || event.code === "Backspace" || event.code === "Enter" || event.code === "Space") {
     openMainMenu();
     return true;
@@ -2780,6 +2880,8 @@ function activateMainMenuItem() {
   }
 
   if (item?.id === "settings") {
+    selectedSettingsIndex = SETTINGS_ITEM.name;
+    selectedSettingsColorIndex = getPlayerColorIndex(playerProfile.color);
     setGameState(GAME_STATE.settings);
     updateTrackSelector(true);
     updateHud(HUD_UPDATE_INTERVAL_S, true);
@@ -2937,6 +3039,77 @@ function moveTrackSelection(direction) {
   updateTrackSelector(true);
   refreshTrackThumbnail(previousTrackId);
   refreshTrackThumbnail(selectedTrackId);
+}
+
+function handleSettingsKey(event) {
+  if (event.code === "Escape" || event.code === "Backspace") {
+    openMainMenu();
+    return true;
+  }
+
+  if (event.code === "ArrowUp" || event.code === "KeyW") {
+    moveSettingsSelection(-1);
+    return true;
+  }
+
+  if (event.code === "ArrowDown" || event.code === "KeyS") {
+    moveSettingsSelection(1);
+    return true;
+  }
+
+  if (selectedSettingsIndex === SETTINGS_ITEM.color && (
+    event.code === "ArrowLeft"
+    || event.code === "KeyA"
+    || event.code === "ArrowRight"
+    || event.code === "KeyD"
+  )) {
+    const direction = event.code === "ArrowLeft" || event.code === "KeyA" ? -1 : 1;
+    selectSettingsColor(direction);
+    return true;
+  }
+
+  if (event.code === "Enter" || event.code === "Space") {
+    activateSettingsSelection();
+    return true;
+  }
+
+  return false;
+}
+
+function moveSettingsSelection(direction) {
+  selectedSettingsIndex = wrapIndex(selectedSettingsIndex + direction, SETTINGS_ITEM_COUNT);
+  updateTrackSelector(true);
+}
+
+function selectSettingsColor(direction) {
+  selectedSettingsColorIndex = wrapIndex(selectedSettingsColorIndex + direction, PLAYER_COLOR_OPTIONS.length);
+  savePlayerProfile({
+    ...playerProfile,
+    color: PLAYER_COLOR_OPTIONS[selectedSettingsColorIndex],
+  });
+  draw(getRenderState());
+}
+
+function activateSettingsSelection() {
+  if (selectedSettingsIndex === SETTINGS_ITEM.name) {
+    const input = trackPanel?.querySelector(".player-name-input");
+    input?.focus();
+    input?.select();
+    return;
+  }
+
+  if (selectedSettingsIndex === SETTINGS_ITEM.color) {
+    savePlayerProfile({
+      ...playerProfile,
+      color: PLAYER_COLOR_OPTIONS[selectedSettingsColorIndex],
+    });
+    draw(getRenderState());
+    return;
+  }
+
+  if (selectedSettingsIndex === SETTINGS_ITEM.display) {
+    toggleAdvancedHud();
+  }
 }
 
 function drawTrackThumbnail(canvasEl, track) {
@@ -3644,6 +3817,12 @@ function isSessionStarted() {
 
 function toggleAdvancedHud() {
   advancedHudVisible = !advancedHudVisible;
+  saveDisplaySettings({ advancedHudVisible });
+  applyAdvancedHudVisibility();
+  updateTrackSelector(true);
+}
+
+function applyAdvancedHudVisibility() {
   hudEl?.classList.toggle("is-advanced", advancedHudVisible);
   if (hudHintEl) {
     hudHintEl.textContent = advancedHudVisible ? "H 隐藏数据" : "H 显示数据";

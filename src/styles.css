@@ -183,6 +183,12 @@ body {
   cursor: pointer;
 }
 
+.settings-toggle.is-selected,
+.player-name-input.is-selected {
+  border-color: rgba(238, 243, 236, 0.72);
+  box-shadow: inset 0 0 0 1px rgba(238, 243, 236, 0.42);
+}
+
 .record-list {
   display: grid;
   gap: 7px;
@@ -358,6 +364,11 @@ body {
 .player-color-option.is-active {
   border-color: #ffffff;
   box-shadow: 0 0 0 1px rgba(238, 243, 236, 0.68);
+}
+
+.player-color-option.is-selected {
+  outline: 2px solid rgba(238, 243, 236, 0.76);
+  outline-offset: 2px;
 }
 
 .track-card {
