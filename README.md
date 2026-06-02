@@ -57,7 +57,15 @@ http://localhost:5173
 - 赛道文件：`data/tracks/*.json`
 - 成绩存储：浏览器 `localStorage` 的 `night-rally.leaderboard.v1`
 - 回放存储：浏览器 `localStorage` 的 `night-rally.replays.v1`
+- 玩家档案：浏览器 `localStorage` 的 `night-rally.playerProfile.v1`
 - 本地记录文件：排行榜面板导出的 `night-rally-records-YYYYMMDD.json`
+
+## 规格
+
+- `specs/handling-model.md`：横向操控和漂移手感模型
+- `specs/longitudinal-speed.md`：纵向速度曲线模型
+- `specs/lap-gameplay.md`：单圈、检查点、回放、Ghost 和排行榜
+- `specs/multiplayer-contract.md`：未来实时多人房间、输入、快照和成绩合同
 
 新增赛道时，在 `data/tracks/` 新建赛道 JSON，再把它加入 `data/tracks/index.json`。
 

@@ -100,6 +100,8 @@ lapLengthM * 4 / 5
 ```txt
 trackName
 timeS
+player.name
+player.color
 rank
 total
 isBest
@@ -129,6 +131,8 @@ version
 trackId
 trackName
 timeS
+player.name
+player.color
 createdAt
 inputs[].tick
 inputs[].throttle
@@ -161,6 +165,8 @@ version
 trackId
 trackName
 carId
+player.name
+player.color
 timeS
 distanceM
 valid
@@ -176,6 +182,7 @@ version         当前为 2
 trackId         赛道 id
 trackName       记录时的赛道显示名
 carId           车辆 id，当前 baseline 车辆为 baseline
+player          本地玩家档案快照，包含 name 和 color
 timeS           完赛时间, s
 distanceM       计时距离，环形赛道为单圈长度，直线为 finishDistanceM
 valid           当前只保存 true；以后可用于无效成绩留痕
@@ -183,7 +190,7 @@ replayRef       可选本地回放引用，当前格式为 { type: "localStorage
 createdAt       ISO 时间
 ```
 
-同一次完赛只能记录一次。重置并重新开始后可以再次记录。读取旧数据时会把缺少 `version / carId / valid / replayRef` 的记录正规化到当前结构；坏数据会被忽略。
+同一次完赛只能记录一次。重置并重新开始后可以再次记录。读取旧数据时会把缺少 `version / carId / player / valid / replayRef` 的记录正规化到当前结构；坏数据会被忽略。
 
 ## 排行榜
 
