@@ -395,6 +395,7 @@ function draw(renderState = getRenderState()) {
   drawWorld(renderState);
   drawTrack(renderState);
   drawSkidMarks();
+  drawGhostCar();
   drawCarShadow();
   drawCar();
 
@@ -695,6 +696,30 @@ function drawCarShadow() {
 }
 
 function drawCar() {
+  drawCarBody({
+    x: car.x,
+    y: car.y,
+    angle: car.bodyAngleRad,
+    drift: driftAmount,
+    alpha: 1,
+    bodyColor: "#d64141",
+    noseColor: "#f0d36a",
+    cabinColor: "#151917",
+    wheelColor: "#222626",
+  });
+}
+
+function drawCarBody({
+  x,
+  y,
+  angle,
+  drift = 0,
+  alpha = 1,
+  bodyColor = "#d64141",
+  noseColor = "#f0d36a",
+  cabinColor = "#151917",
+  wheelColor = "#222626",
+}) {
   const bodyLength = CAR_SPEC.lengthM * PX_PER_METER;
   const bodyWidth = CAR_SPEC.widthM * PX_PER_METER;
   const wheelbase = CAR_SPEC.wheelbaseM * PX_PER_METER;
@@ -703,25 +728,26 @@ function drawCar() {
   const wheelWidth = 5;
 
   ctx.save();
-  ctx.translate(car.x, car.y);
-  ctx.rotate(car.bodyAngleRad);
+  ctx.globalAlpha *= alpha;
+  ctx.translate(x, y);
+  ctx.rotate(angle);
 
-  if (driftAmount > 0.1) {
-    ctx.strokeStyle = `rgba(238, 243, 236, ${0.12 + driftAmount * 0.34})`;
+  if (drift > 0.1) {
+    ctx.strokeStyle = `rgba(238, 243, 236, ${0.12 + drift * 0.34})`;
     ctx.lineWidth = 3;
     ctx.beginPath();
     ctx.moveTo(-bodyLength * 0.32, -bodyWidth * 0.56);
-    ctx.lineTo(-bodyLength * 0.92 - driftAmount * 34, -bodyWidth * 0.72);
+    ctx.lineTo(-bodyLength * 0.92 - drift * 34, -bodyWidth * 0.72);
     ctx.moveTo(-bodyLength * 0.32, bodyWidth * 0.56);
-    ctx.lineTo(-bodyLength * 0.92 - driftAmount * 34, bodyWidth * 0.72);
+    ctx.lineTo(-bodyLength * 0.92 - drift * 34, bodyWidth * 0.72);
     ctx.stroke();
   }
 
-  ctx.fillStyle = "#d64141";
+  ctx.fillStyle = bodyColor;
   roundRect(-bodyLength / 2, -bodyWidth / 2, bodyLength, bodyWidth, 6);
   ctx.fill();
 
-  ctx.fillStyle = "#f0d36a";
+  ctx.fillStyle = noseColor;
   ctx.beginPath();
   ctx.moveTo(bodyLength / 2 - bodyLength * 0.18, -bodyWidth * 0.36);
   ctx.lineTo(bodyLength / 2 + bodyLength * 0.08, 0);
@@ -729,16 +755,83 @@ function drawCar() {
   ctx.closePath();
   ctx.fill();
 
-  ctx.fillStyle = "#151917";
+  ctx.fillStyle = cabinColor;
   ctx.fillRect(-bodyLength * 0.22, -bodyWidth * 0.35, bodyLength * 0.34, bodyWidth * 0.7);
 
-  ctx.fillStyle = "#222626";
+  ctx.fillStyle = wheelColor;
   ctx.fillRect(-axleOffset - wheelLength / 2, -bodyWidth / 2 - wheelWidth, wheelLength, wheelWidth);
   ctx.fillRect(axleOffset - wheelLength / 2, -bodyWidth / 2 - wheelWidth, wheelLength, wheelWidth);
   ctx.fillRect(-axleOffset - wheelLength / 2, bodyWidth / 2, wheelLength, wheelWidth);
   ctx.fillRect(axleOffset - wheelLength / 2, bodyWidth / 2, wheelLength, wheelWidth);
 
   ctx.restore();
+}
+
+function drawGhostCar() {
+  if (gameState !== GAME_STATE.racing || !hasTimedRunTrack()) {
+    return;
+  }
+
+  const ghost = getActiveGhostPose();
+  if (!ghost) {
+    return;
+  }
+
+  drawCarBody({
+    x: ghost.x,
+    y: ghost.y,
+    angle: ghost.bodyAngleRad,
+    alpha: 0.42,
+    bodyColor: "#eef3ec",
+    noseColor: "#b7efe7",
+    cabinColor: "#3d4744",
+    wheelColor: "#eef3ec",
+  });
+}
+
+function getActiveGhostPose() {
+  const track = getActiveTrack();
+  const bestRecord = getLeaderboardRecordsForTrack(track.id).find((record) => record.replayId);
+  const replay = getReplayRecord(bestRecord?.replayId);
+  const timeS = hasLapTrack(track) ? lapTime : testTime;
+
+  if (!replay || replay.trackId !== track.id || !Number.isFinite(timeS)) {
+    return null;
+  }
+
+  return sampleReplayPose(replay, timeS);
+}
+
+function sampleReplayPose(replay, timeS) {
+  const keyframes = replay.keyframes;
+  if (!Array.isArray(keyframes) || keyframes.length === 0) {
+    return null;
+  }
+
+  if (timeS <= keyframes[0].t) {
+    return keyframes[0];
+  }
+
+  for (let index = 0; index < keyframes.length - 1; index += 1) {
+    const current = keyframes[index];
+    const next = keyframes[index + 1];
+    if (timeS <= next.t) {
+      const ratio = clamp((timeS - current.t) / Math.max(0.001, next.t - current.t), 0, 1);
+
+      return interpolateReplayPose(current, next, ratio);
+    }
+  }
+
+  return keyframes[keyframes.length - 1];
+}
+
+function interpolateReplayPose(current, next, ratio) {
+  return {
+    x: lerp(current.x, next.x, ratio),
+    y: lerp(current.y, next.y, ratio),
+    bodyAngleRad: lerpAngle(current.bodyAngleRad, next.bodyAngleRad, ratio),
+    moveAngleRad: lerpAngle(current.moveAngleRad, next.moveAngleRad, ratio),
+  };
 }
 
 function addSkidMarks(forward, right, moveDirection, intensity, speedKmh) {
@@ -1432,11 +1525,12 @@ function updateReplayPlayback(dt) {
   const next = keyframes[replayPlayback.keyframeIndex + 1] ?? current;
   const duration = Math.max(0.001, next.t - current.t);
   const ratio = clamp((replayPlayback.elapsedS - current.t) / duration, 0, 1);
+  const pose = interpolateReplayPose(current, next, ratio);
 
-  car.x = lerp(current.x, next.x, ratio);
-  car.y = lerp(current.y, next.y, ratio);
-  car.bodyAngleRad = lerpAngle(current.bodyAngleRad, next.bodyAngleRad, ratio);
-  car.moveAngleRad = lerpAngle(current.moveAngleRad, next.moveAngleRad, ratio);
+  car.x = pose.x;
+  car.y = pose.y;
+  car.bodyAngleRad = pose.bodyAngleRad;
+  car.moveAngleRad = pose.moveAngleRad;
   car.angle = car.bodyAngleRad;
   car.vx = 0;
   car.vy = 0;
