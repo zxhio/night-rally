@@ -2365,20 +2365,20 @@ function updateResultPanel() {
   const retry = document.createElement("button");
   retry.type = "button";
   retry.className = "result-action is-primary";
-  retry.textContent = "Retry";
+  retry.textContent = "再来一次";
   retry.addEventListener("click", restartCurrentTrack);
 
   const replay = document.createElement("button");
   replay.type = "button";
-  replay.className = "result-action";
-  replay.textContent = "Replay";
+  replay.className = "result-action is-secondary";
+  replay.textContent = "回放";
   replay.disabled = !getLeaderboardRecordReplayId(lastFinishResult);
   replay.addEventListener("click", () => startReplayPlayback(getLeaderboardRecordReplayId(lastFinishResult)));
 
   const select = document.createElement("button");
   select.type = "button";
-  select.className = "result-action";
-  select.textContent = "Tracks";
+  select.className = "result-action is-secondary";
+  select.textContent = "换赛道";
   select.addEventListener("click", () => {
     resetCar();
     openTrackSelection();

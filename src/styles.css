@@ -481,9 +481,15 @@ body {
 }
 
 .result-action.is-primary {
+  min-width: 132px;
   border-color: rgba(238, 243, 236, 0.62);
   background: rgba(238, 243, 236, 0.18);
   color: #ffffff;
+}
+
+.result-action.is-secondary {
+  min-width: 82px;
+  color: rgba(238, 243, 236, 0.64);
 }
 
 .hud {
