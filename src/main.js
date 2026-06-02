@@ -63,6 +63,7 @@ const GAME_STATE = {
 };
 const LAP_PROGRESS_JUMP_BUFFER_M = 18;
 const LAP_FINISH_LINE_WINDOW_M = 90;
+const DEFAULT_LAP_CHECKPOINT_COUNT = 4;
 const LAP_SAMPLE_WINDOW_SEGMENTS = 48;
 const TRACK_CORRIDOR_SAMPLE_WINDOW_SEGMENTS = 96;
 const LAP_REVERSE_CORRECT_M = 40;
@@ -152,6 +153,8 @@ let lapProgress = 0;
 let lapLastProgressM = 0;
 let lapLastSegmentIndex = 0;
 let lapReverseM = 0;
+let lapNextCheckpointIndex = 0;
+let lapPassedCheckpoints = 0;
 let lapFinishCoastTime = 0;
 let lapFinishVx = 0;
 let lapFinishVy = 0;
@@ -857,6 +860,7 @@ function updateLapMode(input, dt, frameDistanceM) {
     lapLastSegmentIndex = sample.segmentIndex;
     lapDistance = 0;
     lapProgress = 0;
+    resetLapCheckpointProgress();
 
     if (input.throttle > 0) {
       lapState = LAP_STATE.running;
@@ -890,6 +894,7 @@ function updateLapMode(input, dt, frameDistanceM) {
     lapDistance += progressDeltaM;
     lapLastProgressM = sampleProgressM;
     lapLastSegmentIndex = sample.segmentIndex;
+    updateLapCheckpoints(track, lapDistance);
   } else if (progressDeltaM < 0 && Math.abs(progressDeltaM) <= maxProgressDeltaM) {
     lapReverseM += Math.abs(progressDeltaM);
     lapLastProgressM = sampleProgressM;
@@ -903,7 +908,8 @@ function updateLapMode(input, dt, frameDistanceM) {
     return;
   }
 
-  if (lapDistance >= track.lap.lengthM || crossedFinishLine) {
+  const canFinish = hasPassedRequiredCheckpoints(track);
+  if ((lapDistance >= track.lap.lengthM || crossedFinishLine) && canFinish) {
     lapDistance = track.lap.lengthM;
     recordFinishTime(track, lapTime);
     startLapFinishCoast();
@@ -934,6 +940,30 @@ function updateStraightStartMode(input) {
   setGameState(GAME_STATE.racing);
   testTime = 0;
   testDistance = 0;
+}
+
+function resetLapCheckpointProgress() {
+  lapNextCheckpointIndex = 0;
+  lapPassedCheckpoints = 0;
+}
+
+function updateLapCheckpoints(track, distanceM) {
+  if (!Array.isArray(track.checkpoints)) {
+    return;
+  }
+
+  while (
+    lapNextCheckpointIndex < track.checkpoints.length
+    && distanceM >= track.checkpoints[lapNextCheckpointIndex].progressM
+  ) {
+    lapNextCheckpointIndex += 1;
+    lapPassedCheckpoints = lapNextCheckpointIndex;
+  }
+}
+
+function hasPassedRequiredCheckpoints(track) {
+  return !Array.isArray(track.checkpoints)
+    || lapPassedCheckpoints >= track.checkpoints.length;
 }
 
 function holdFinishedLap(dt) {
@@ -1697,6 +1727,7 @@ function resetLapMode() {
   lapDistance = 0;
   lapProgress = 0;
   lapReverseM = 0;
+  resetLapCheckpointProgress();
   lapFinishCoastTime = 0;
   lapFinishVx = 0;
   lapFinishVy = 0;
@@ -1799,6 +1830,7 @@ function normalizeTrack(rawTrack) {
     track.path = readPointList(rawTrack.path, `tracks.${id}.path`);
     track.collisionPath = buildSmoothedCircuitSamples(track.path, rawTrack.collisionSteps ?? 16);
     track.lap = buildPathMetrics(track.collisionPath);
+    track.checkpoints = readLapCheckpoints(rawTrack.checkpoints, track.lap.lengthM, `tracks.${id}.checkpoints`);
     track.startAngle = Number.isFinite(start.angle) ? start.angle : getPathSegmentAngle(track.path, 0);
     track.roadHalfWidth = readTrackNumber(surface.roadHalfWidth, `tracks.${id}.surface.roadHalfWidth`);
     track.curbWidth = readTrackNumber(surface.curbWidth, `tracks.${id}.surface.curbWidth`);
@@ -2099,6 +2131,41 @@ function readPointList(points, name) {
 
     return [point[0], point[1]];
   });
+}
+
+function readLapCheckpoints(checkpoints, lapLengthM, name) {
+  if (!Array.isArray(checkpoints)) {
+    return buildDefaultLapCheckpoints(lapLengthM);
+  }
+
+  const normalized = checkpoints
+    .map((checkpoint, index) => readLapCheckpoint(checkpoint, lapLengthM, `${name}[${index}]`))
+    .filter((checkpoint) => checkpoint.progressM > 0 && checkpoint.progressM < lapLengthM)
+    .sort((a, b) => a.progressM - b.progressM);
+
+  if (normalized.length === 0) {
+    return buildDefaultLapCheckpoints(lapLengthM);
+  }
+
+  return normalized;
+}
+
+function readLapCheckpoint(checkpoint, lapLengthM, name) {
+  if (Number.isFinite(checkpoint)) {
+    return { progressM: clamp(checkpoint, 0, lapLengthM) };
+  }
+
+  if (checkpoint && typeof checkpoint === "object" && Number.isFinite(checkpoint.progressM)) {
+    return { progressM: clamp(checkpoint.progressM, 0, lapLengthM) };
+  }
+
+  throw new Error(`${name} must be a progress meter value or { progressM }`);
+}
+
+function buildDefaultLapCheckpoints(lapLengthM) {
+  return Array.from({ length: DEFAULT_LAP_CHECKPOINT_COUNT }, (_, index) => ({
+    progressM: lapLengthM * (index + 1) / (DEFAULT_LAP_CHECKPOINT_COUNT + 1),
+  }));
 }
 
 function handleLoadError(error) {
