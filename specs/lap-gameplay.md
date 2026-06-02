@@ -140,11 +140,25 @@ inputs[].steer
 keyframes[].t
 keyframes[].x
 keyframes[].y
+keyframes[].vx
+keyframes[].vy
 keyframes[].bodyAngleRad
 keyframes[].moveAngleRad
+keyframes[].speedKmh
+keyframes[].accelG
+keyframes[].driftAmount
+keyframes[].steeringInput
+keyframes[].slipDeg
+keyframes[].yawRateDegS
+keyframes[].turnRadiusM
+keyframes[].testTime
+keyframes[].testDistance
+keyframes[].lapTime
+keyframes[].lapDistance
+keyframes[].lapProgress
 ```
 
-当前回放播放使用关键帧插值，只做视觉回放。输入流也会一起保存，后续固定 tick 模拟完成后，可以用输入流重放出更严格的 Ghost。
+当前回放播放使用关键帧插值，位置、速度、G 值、漂移量和胎痕都从关键帧恢复。旧回放如果缺少扩展运动字段，会从相邻关键帧的位置和角度推导基础速度、G 值和漂移痕迹。输入流也会一起保存，后续固定 tick 模拟完成后，可以用输入流重放出更严格的 Ghost。
 
 ## Ghost 车
 

@@ -843,12 +843,36 @@ function sampleReplayPose(replay, timeS) {
 }
 
 function interpolateReplayPose(current, next, ratio) {
-  return {
+  const pose = {
     x: lerp(current.x, next.x, ratio),
     y: lerp(current.y, next.y, ratio),
     bodyAngleRad: lerpAngle(current.bodyAngleRad, next.bodyAngleRad, ratio),
     moveAngleRad: lerpAngle(current.moveAngleRad, next.moveAngleRad, ratio),
   };
+  const replayMetrics = [
+    "vx",
+    "vy",
+    "speedKmh",
+    "accelG",
+    "driftAmount",
+    "steeringInput",
+    "slipDeg",
+    "yawRateDegS",
+    "turnRadiusM",
+    "testTime",
+    "testDistance",
+    "lapTime",
+    "lapDistance",
+    "lapProgress",
+  ];
+
+  for (const metric of replayMetrics) {
+    if (Number.isFinite(current[metric]) && Number.isFinite(next[metric])) {
+      pose[metric] = lerp(current[metric], next[metric], ratio);
+    }
+  }
+
+  return pose;
 }
 
 function addSkidMarks(forward, right, moveDirection, intensity, speedKmh) {
@@ -1791,8 +1815,22 @@ function captureReplayKeyframe(dt, force = false) {
     t: replayCapture.elapsedS,
     x: car.x,
     y: car.y,
+    vx: car.vx,
+    vy: car.vy,
     bodyAngleRad: car.bodyAngleRad,
     moveAngleRad: car.moveAngleRad,
+    speedKmh: toKmh(toGameSpeed(Math.hypot(car.vx, car.vy))),
+    accelG,
+    driftAmount,
+    steeringInput,
+    slipDeg,
+    yawRateDegS,
+    turnRadiusM,
+    testTime,
+    testDistance,
+    lapTime,
+    lapDistance,
+    lapProgress,
   });
 }
 
@@ -1883,6 +1921,7 @@ function startReplayPlayback(replayId) {
     replay,
     elapsedS: 0,
     keyframeIndex: 0,
+    distanceM: 0,
   };
   setGameState(GAME_STATE.replay);
   updateResultPanel();
@@ -1909,26 +1948,72 @@ function updateReplayPlayback(dt) {
   const duration = Math.max(0.001, next.t - current.t);
   const ratio = clamp((replayPlayback.elapsedS - current.t) / duration, 0, 1);
   const pose = interpolateReplayPose(current, next, ratio);
+  const previousX = car.x;
+  const previousY = car.y;
+  const derivedVx = Number.isFinite(pose.vx) ? pose.vx : (next.x - current.x) / duration;
+  const derivedVy = Number.isFinite(pose.vy) ? pose.vy : (next.y - current.y) / duration;
+  const speedKmh = Number.isFinite(pose.speedKmh)
+    ? pose.speedKmh
+    : toKmh(toGameSpeed(Math.hypot(derivedVx, derivedVy)));
 
   car.x = pose.x;
   car.y = pose.y;
   car.bodyAngleRad = pose.bodyAngleRad;
   car.moveAngleRad = pose.moveAngleRad;
   car.angle = car.bodyAngleRad;
-  car.vx = 0;
-  car.vy = 0;
-  steeringInput = 0;
-  driftAmount = 0;
-  yawRateDegS = 0;
-  accelG = 0;
+  car.vx = derivedVx;
+  car.vy = derivedVy;
+  steeringInput = Number.isFinite(pose.steeringInput) ? pose.steeringInput : 0;
+  driftAmount = Number.isFinite(pose.driftAmount)
+    ? pose.driftAmount
+    : smoothstep(10, 42, Math.abs(radToDeg(angleDelta(car.bodyAngleRad, car.moveAngleRad))));
+  driftActive = driftAmount > DRIFT_ACTIVE_MIN_AMOUNT;
+  yawRateDegS = Number.isFinite(pose.yawRateDegS)
+    ? pose.yawRateDegS
+    : getReplayYawRateDegS(current, next, duration);
+  turnRadiusM = Number.isFinite(pose.turnRadiusM) ? pose.turnRadiusM : getTurnRadiusM(speedKmh, yawRateDegS);
+  slipDeg = Number.isFinite(pose.slipDeg)
+    ? pose.slipDeg
+    : Math.abs(radToDeg(angleDelta(car.bodyAngleRad, car.moveAngleRad)));
+  if (Number.isFinite(pose.accelG)) {
+    accelG = pose.accelG;
+    lastSpeedKmh = speedKmh;
+  } else {
+    updateAccelerationMeter(dt);
+  }
+  testTime = Number.isFinite(pose.testTime) ? pose.testTime : replayPlayback.elapsedS;
+  lapTime = Number.isFinite(pose.lapTime) ? pose.lapTime : replayPlayback.elapsedS;
+  replayPlayback.distanceM += Math.hypot(car.x - previousX, car.y - previousY) * METERS_PER_PIXEL;
+  testDistance = Number.isFinite(pose.testDistance) ? pose.testDistance : replayPlayback.distanceM;
+  lapDistance = Number.isFinite(pose.lapDistance) ? pose.lapDistance : replayPlayback.distanceM;
+  lapProgress = Number.isFinite(pose.lapProgress)
+    ? pose.lapProgress
+    : clamp(lapDistance / Math.max(1, getActiveTrack().lap?.lengthM ?? testDistance), 0, 1);
   currentSurface = getSurfaceAt(car.x, car.y);
   previousSurface = currentSurface;
+  addReplaySkidMarks(speedKmh);
 
   if (replayPlayback.elapsedS >= keyframes[keyframes.length - 1].t) {
     replayPlayback = null;
     setGameState(GAME_STATE.result);
     updateResultPanel();
   }
+}
+
+function getReplayYawRateDegS(current, next, duration) {
+  return radToDeg(angleDelta(next.bodyAngleRad, current.bodyAngleRad)) / duration;
+}
+
+function addReplaySkidMarks(speedKmh) {
+  const intensity = Math.max(driftAmount, smoothstep(12, 38, slipDeg));
+  if (intensity <= DRIFT_TRAIL_MIN_AMOUNT || speedKmh <= DRIFT_TRAIL_MIN_KMH) {
+    return;
+  }
+
+  const forward = angleVector(car.bodyAngleRad);
+  const right = { x: -forward.y, y: forward.x };
+  const moveDirection = angleVector(car.moveAngleRad);
+  addSkidMarks(forward, right, moveDirection, intensity, speedKmh);
 }
 
 function renderTrackSelector() {
