@@ -110,6 +110,7 @@ const surfaceEl = document.querySelector("#surface");
 const lapStateEl = document.querySelector("#lap-state");
 const lapProgressEl = document.querySelector("#lap-progress");
 const trackPanel = document.querySelector("#track-panel");
+const resultPanel = document.querySelector("#result-panel");
 
 const keys = new Set();
 const view = { width: 0, height: 0, dpr: 1 };
@@ -155,6 +156,7 @@ let lapFinishCoastTime = 0;
 let lapFinishVx = 0;
 let lapFinishVy = 0;
 let finishRecorded = false;
+let lastFinishResult = null;
 let hudUpdateAccumulator = HUD_UPDATE_INTERVAL_S;
 let thumbnailUpdateAccumulator = THUMBNAIL_UPDATE_INTERVAL_S;
 const skidMarks = [];
@@ -167,6 +169,11 @@ window.addEventListener("keydown", (event) => {
   if (event.code === "KeyR") {
     resetCar();
     openTrackSelection();
+    return;
+  }
+
+  if (gameState === GAME_STATE.result && (event.code === "Enter" || event.code === "Space")) {
+    restartCurrentTrack();
     return;
   }
 
@@ -988,6 +995,7 @@ function updateFinishCoast(dt) {
     stopCarForLapFinish();
     lapState = LAP_STATE.finished;
     setGameState(GAME_STATE.result);
+    updateResultPanel();
   }
 
   updateCamera(dt);
@@ -1100,23 +1108,35 @@ function recordFinishTime(track, timeS) {
   }
 
   finishRecorded = true;
-  saveLeaderboardRecord(track.id, {
+  const record = {
     trackId: track.id,
     trackName: track.name,
     timeS,
     distanceM: hasLapTrack(track) ? track.lap.lengthM : track.finishDistanceM,
     createdAt: new Date().toISOString(),
-  });
+  };
+  const result = saveLeaderboardRecord(track.id, record);
+  lastFinishResult = {
+    ...record,
+    rank: result.rank,
+    total: result.total,
+    isBest: result.rank === 1,
+  };
+  updateResultPanel();
 }
 
 function saveLeaderboardRecord(trackId, record) {
   const records = loadLeaderboardRecords();
   const trackRecords = Array.isArray(records[trackId]) ? records[trackId] : [];
 
-  records[trackId] = [...trackRecords, record]
+  const nextRecords = [...trackRecords, record]
     .filter(isValidLeaderboardRecord)
     .sort((a, b) => a.timeS - b.timeS)
     .slice(0, LEADERBOARD_MAX_RECORDS_PER_TRACK);
+  const savedRecord = nextRecords.find((candidate) => candidate.createdAt === record.createdAt);
+  const rank = savedRecord ? nextRecords.indexOf(savedRecord) + 1 : null;
+
+  records[trackId] = nextRecords;
 
   try {
     localStorage.setItem(LEADERBOARD_STORAGE_KEY, JSON.stringify(records));
@@ -1124,6 +1144,11 @@ function saveLeaderboardRecord(trackId, record) {
   } catch (error) {
     console.warn("Failed to save leaderboard", error);
   }
+
+  return {
+    rank,
+    total: nextRecords.length,
+  };
 }
 
 function loadLeaderboardRecords() {
@@ -1281,6 +1306,66 @@ function createLeaderboardPanel(track) {
   return panel;
 }
 
+function updateResultPanel() {
+  if (!resultPanel) {
+    return;
+  }
+
+  resultPanel.hidden = gameState !== GAME_STATE.result || !lastFinishResult;
+  if (resultPanel.hidden) {
+    resultPanel.replaceChildren();
+    return;
+  }
+
+  const summary = document.createElement("div");
+  summary.className = "result-summary";
+
+  const trackName = document.createElement("span");
+  trackName.className = "result-track";
+  trackName.textContent = lastFinishResult.trackName;
+
+  const time = document.createElement("strong");
+  time.className = "result-time";
+  time.textContent = formatTime(lastFinishResult.timeS);
+
+  const rank = document.createElement("span");
+  rank.className = "result-rank";
+  rank.textContent = formatResultRank(lastFinishResult);
+
+  summary.append(trackName, time, rank);
+
+  const actions = document.createElement("div");
+  actions.className = "result-actions";
+
+  const retry = document.createElement("button");
+  retry.type = "button";
+  retry.className = "result-action is-primary";
+  retry.textContent = "Retry";
+  retry.addEventListener("click", restartCurrentTrack);
+
+  const select = document.createElement("button");
+  select.type = "button";
+  select.className = "result-action";
+  select.textContent = "Tracks";
+  select.addEventListener("click", () => {
+    resetCar();
+    openTrackSelection();
+  });
+
+  actions.append(retry, select);
+  resultPanel.replaceChildren(summary, actions);
+}
+
+function formatResultRank(result) {
+  if (!Number.isFinite(result.rank)) {
+    return "Result saved locally";
+  }
+
+  const bestLabel = result.isBest ? " · Best" : "";
+
+  return `Rank #${result.rank} / ${result.total}${bestLabel}`;
+}
+
 function getDisplayedLeaderboardTrack() {
   return isTrackSelectionMode() ? TRACKS[selectedTrackId] : getActiveTrack();
 }
@@ -1335,6 +1420,7 @@ function isTrackSelectionMode() {
 function openTrackSelection() {
   setGameState(GAME_STATE.trackSelect);
   selectedTrackId = activeTrackId;
+  updateResultPanel();
   updateTrackSelector(true);
   updateHud(HUD_UPDATE_INTERVAL_S, true);
   draw();
@@ -1354,6 +1440,21 @@ function confirmTrackSelection(trackId = selectedTrackId) {
 
   setGameState(GAME_STATE.countdown);
   selectedTrackId = trackId;
+  updateResultPanel();
+  updateTrackSelector(true);
+  updateHud(HUD_UPDATE_INTERVAL_S, true);
+}
+
+function restartCurrentTrack() {
+  if (!activeTrackId) {
+    return;
+  }
+
+  keys.clear();
+  resetCar();
+  setGameState(GAME_STATE.countdown);
+  selectedTrackId = activeTrackId;
+  updateResultPanel();
   updateTrackSelector(true);
   updateHud(HUD_UPDATE_INTERVAL_S, true);
 }

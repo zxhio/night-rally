@@ -204,6 +204,81 @@ body {
   font-weight: 700;
 }
 
+.result-panel {
+  position: absolute;
+  left: 50%;
+  bottom: 24px;
+  display: grid;
+  grid-template-columns: max-content max-content;
+  align-items: end;
+  gap: 14px;
+  width: min(520px, calc(100vw - 32px));
+  padding: 12px;
+  border: 1px solid rgba(238, 243, 236, 0.18);
+  border-radius: 6px;
+  background: rgba(12, 15, 14, 0.86);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.28);
+  transform: translateX(-50%);
+}
+
+.result-panel[hidden] {
+  display: none;
+}
+
+.result-summary {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.result-track {
+  color: rgba(238, 243, 236, 0.62);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.result-time {
+  color: #ffffff;
+  font-size: 30px;
+  font-weight: 900;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.result-rank {
+  color: rgba(238, 243, 236, 0.72);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+.result-actions {
+  display: flex;
+  justify-content: end;
+  gap: 8px;
+}
+
+.result-action {
+  min-width: 96px;
+  min-height: 34px;
+  border: 1px solid rgba(238, 243, 236, 0.22);
+  border-radius: 5px;
+  background: rgba(238, 243, 236, 0.08);
+  color: rgba(238, 243, 236, 0.78);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.result-action.is-primary {
+  border-color: rgba(238, 243, 236, 0.62);
+  background: rgba(238, 243, 236, 0.18);
+  color: #ffffff;
+}
+
 .hud {
   position: absolute;
   top: 16px;
@@ -329,6 +404,20 @@ body {
   .hud {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     right: 16px;
+  }
+
+  .result-panel {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .result-actions {
+    justify-content: stretch;
+  }
+
+  .result-action {
+    flex: 1 1 0;
+    min-width: 0;
   }
 
   .metric {

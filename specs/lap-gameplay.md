@@ -63,6 +63,24 @@ result
 
 完成后进入 `Coast`，车辆滑行约 2 秒后进入 `Finish`。滑行只做视觉收尾，不再改变成绩时间。
 
+## 结算流程
+
+进入 `result` 后显示本次成绩：
+
+```txt
+trackName
+timeS
+rank
+total
+isBest
+```
+
+操作：
+
+- `Enter` / `Space`：重开当前赛道。
+- `R`：复位并返回赛道选择。
+- 结果面板上的 `Retry` 和 `Tracks` 按钮提供同样入口。
+
 ## 成绩记录
 
 每次有效完赛记录一条：
