@@ -1,7 +1,12 @@
 {
   "version": 1,
-  "default": "zhejiang-international-circuit",
+  "default": "straight",
   "tracks": [
+    {
+      "id": "straight",
+      "name": "3公里直道",
+      "file": "straight.json"
+    },
     {
       "id": "zhejiang-international-circuit",
       "name": "浙江国际赛车场",
@@ -11,11 +16,6 @@
       "id": "goldenport",
       "name": "北京金港国际赛车场",
       "file": "goldenport.json"
-    },
-    {
-      "id": "straight",
-      "name": "3公里直道",
-      "file": "straight.json"
     }
   ]
 }

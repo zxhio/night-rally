@@ -2030,49 +2030,114 @@ function renderTrackSelector() {
   }
 
   const compact = !isTrackSelectionMode();
-  const tracks = compact ? [getActiveTrack()] : TRACK_LIST;
   trackPanel.classList.toggle("is-compact", compact);
+  trackPanel.classList.toggle("is-start", !compact);
   trackPanel.replaceChildren();
 
   if (!compact) {
-    trackPanel.append(createPlayerProfilePanel());
-    trackPanel.append(createTrackHint());
+    trackPanel.append(createStartPanel(getDisplayedLeaderboardTrack()));
+    return;
   }
 
+  const tracks = [getActiveTrack()];
   for (const track of tracks) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "track-card";
-    button.dataset.track = track.id;
-    button.disabled = compact;
-    button.classList.toggle("is-active", track.id === activeTrackId);
-    button.classList.toggle("is-selected", track.id === selectedTrackId);
-    button.addEventListener("click", () => confirmTrackSelection(track.id));
-
-    const thumb = document.createElement("canvas");
-    thumb.className = "track-thumb";
-    thumb.dataset.track = track.id;
-    thumb.width = 184;
-    thumb.height = 110;
-    drawTrackThumbnail(thumb, track);
-
-    const meta = document.createElement("span");
-    meta.className = "track-meta";
-
-    const name = document.createElement("span");
-    name.className = "track-name";
-    name.textContent = track.name;
-
-    const length = document.createElement("span");
-    length.className = "track-length";
-    length.textContent = track.displayLength;
-
-    meta.append(name, length);
-    button.append(thumb, meta);
-    trackPanel.append(button);
+    trackPanel.append(createTrackCard(track, compact));
   }
 
   trackPanel.append(createLeaderboardPanel(getDisplayedLeaderboardTrack()));
+}
+
+function createStartPanel(track) {
+  const panel = document.createElement("section");
+  panel.className = "start-panel";
+
+  const title = document.createElement("strong");
+  title.className = "start-title";
+  title.textContent = "Night Rally";
+
+  const thumb = document.createElement("canvas");
+  thumb.className = "start-thumb";
+  thumb.dataset.track = track.id;
+  thumb.width = 320;
+  thumb.height = 180;
+  drawTrackThumbnail(thumb, track);
+
+  const trackName = document.createElement("span");
+  trackName.className = "start-track";
+  trackName.textContent = `${track.name} · ${track.displayLength}`;
+
+  const start = document.createElement("button");
+  start.type = "button";
+  start.className = "start-action";
+  start.textContent = "开始练习";
+  start.addEventListener("click", () => confirmTrackSelection(track.id));
+
+  const controls = document.createElement("span");
+  controls.className = "start-controls";
+  controls.textContent = "WASD / 方向键驾驶 · Enter 开始";
+
+  const quick = document.createElement("span");
+  quick.className = "start-quick";
+  quick.textContent = "↑↓ 切换赛道 · 1 直道  2 浙江国际  3 金港";
+
+  const tracks = document.createElement("details");
+  tracks.className = "start-details start-management";
+
+  const tracksSummary = document.createElement("summary");
+  tracksSummary.textContent = "选择赛道和记录";
+
+  const trackList = document.createElement("div");
+  trackList.className = "start-track-list";
+  TRACK_LIST.forEach((candidate) => {
+    trackList.append(createTrackCard(candidate, false));
+  });
+
+  tracks.append(tracksSummary, trackList, createLeaderboardPanel(track));
+
+  const profile = document.createElement("details");
+  profile.className = "start-details";
+
+  const summary = document.createElement("summary");
+  summary.textContent = `${playerProfile.name} · 车手设置`;
+
+  profile.append(summary, createPlayerProfilePanel());
+  panel.append(title, thumb, trackName, start, controls, quick, tracks, profile);
+
+  return panel;
+}
+
+function createTrackCard(track, disabled) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "track-card";
+  button.dataset.track = track.id;
+  button.disabled = disabled;
+  button.classList.toggle("is-active", track.id === activeTrackId);
+  button.classList.toggle("is-selected", track.id === selectedTrackId);
+  button.addEventListener("click", () => confirmTrackSelection(track.id));
+
+  const thumb = document.createElement("canvas");
+  thumb.className = "track-thumb";
+  thumb.dataset.track = track.id;
+  thumb.width = 184;
+  thumb.height = 110;
+  drawTrackThumbnail(thumb, track);
+
+  const meta = document.createElement("span");
+  meta.className = "track-meta";
+
+  const name = document.createElement("span");
+  name.className = "track-name";
+  name.textContent = track.name;
+
+  const length = document.createElement("span");
+  length.className = "track-length";
+  length.textContent = track.displayLength;
+
+  meta.append(name, length);
+  button.append(thumb, meta);
+
+  return button;
 }
 
 function createTrackHint() {
