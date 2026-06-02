@@ -72,6 +72,15 @@ moveAngleRadNext              ← 行进方向追随车头
 xMNext, yMNext                ← 沿 moveAngleRadNext 积分
 ```
 
+当前代码边界：
+
+```txt
+update(dt)                         游戏状态分派、结果态/滑行态处理、HUD 和镜头收尾
+updateDrivingSimulation(input, dt) 单帧驾驶模拟：输入、地表、速度、转向、碰撞、完赛判断、轮胎痕迹
+```
+
+`updateDrivingSimulation` 仍然使用当前全局车辆状态，这是为了保持车感和改动范围稳定。后续拆模拟核心时，再把车辆、赛道采样、完赛规则改成显式 state 输入/输出，并引入固定 tick。
+
 ## 输入快照
 
 键盘输入先转换成每个逻辑帧的输入快照。后续回放、Ghost 和多人同步都应该消费同样结构，而不是直接读取键盘状态。

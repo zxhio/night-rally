@@ -251,6 +251,12 @@ function update(dt) {
     return;
   }
 
+  updateDrivingSimulation(input, dt);
+  updateCamera(dt);
+  updateHud(dt);
+}
+
+function updateDrivingSimulation(input, dt) {
   if (!testActive && input.throttle > 0) {
     testActive = true;
   }
@@ -344,8 +350,6 @@ function update(dt) {
   slipDeg = Math.abs(radToDeg(angleDelta(car.bodyAngleRad, car.moveAngleRad)));
   const trailIntensity = getTireTrailIntensity(driftAmount, brakingForward, speedAbsKmh);
   addSkidMarks(forward, right, moveDirection, trailIntensity, speedAbsKmh);
-  updateCamera(dt);
-  updateHud(dt);
 }
 
 function draw() {
