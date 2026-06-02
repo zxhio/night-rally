@@ -69,6 +69,53 @@ body {
   line-height: 1.2;
 }
 
+.player-profile {
+  display: grid;
+  gap: 7px;
+  padding: 7px;
+  border: 1px solid rgba(238, 243, 236, 0.1);
+  border-radius: 4px;
+  background: rgba(238, 243, 236, 0.04);
+}
+
+.player-name-input {
+  width: 100%;
+  min-height: 28px;
+  border: 1px solid rgba(238, 243, 236, 0.16);
+  border-radius: 4px;
+  background: rgba(12, 15, 14, 0.5);
+  color: #ffffff;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  outline: none;
+  padding: 5px 7px;
+}
+
+.player-name-input:focus {
+  border-color: rgba(238, 243, 236, 0.48);
+}
+
+.player-color-list {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 5px;
+}
+
+.player-color-option {
+  aspect-ratio: 1;
+  min-width: 0;
+  border: 1px solid rgba(238, 243, 236, 0.18);
+  border-radius: 4px;
+  background: var(--player-color);
+  cursor: pointer;
+}
+
+.player-color-option.is-active {
+  border-color: #ffffff;
+  box-shadow: 0 0 0 1px rgba(238, 243, 236, 0.68);
+}
+
 .track-card {
   display: grid;
   grid-template-columns: 1fr;
@@ -198,6 +245,29 @@ body {
   font-weight: 800;
 }
 
+.leaderboard-entry {
+  display: grid;
+  grid-template-columns: 8px max-content minmax(0, 1fr);
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.leaderboard-swatch,
+.result-player-swatch {
+  width: 8px;
+  height: 8px;
+  border: 1px solid rgba(238, 243, 236, 0.42);
+  border-radius: 50%;
+  background: var(--player-color);
+}
+
+.leaderboard-player {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .leaderboard-empty {
   grid-template-columns: 1fr;
   color: rgba(238, 243, 236, 0.5);
@@ -282,6 +352,23 @@ body {
   font-size: 12px;
   font-weight: 800;
   line-height: 1.15;
+}
+
+.result-player {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: rgba(238, 243, 236, 0.64);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+.result-player span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .result-actions {

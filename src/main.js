@@ -3,6 +3,7 @@ const TRACK_DATA_URL = "data/tracks/index.json?v=20260601-track-data";
 const TRACK_DATA_BASE_URL = "data/tracks/";
 const LEADERBOARD_STORAGE_KEY = "night-rally.leaderboard.v1";
 const REPLAY_STORAGE_KEY = "night-rally.replays.v1";
+const PLAYER_PROFILE_STORAGE_KEY = "night-rally.playerProfile.v1";
 const LOCAL_RECORDS_EXPORT_VERSION = 1;
 const LEADERBOARD_RECORD_VERSION = 2;
 const LEADERBOARD_MAX_RECORDS_PER_TRACK = 50;
@@ -101,6 +102,11 @@ const TRACK_PALETTE = {
 const FENCE_COLLISION = {
   driftKeep: 0.25,
 };
+const DEFAULT_PLAYER_PROFILE = {
+  name: "Player",
+  color: "#d64141",
+};
+const PLAYER_COLOR_OPTIONS = ["#d64141", "#2f80ed", "#2fbf71", "#f0b43f", "#b86ff0", "#f46d43"];
 
 let vehicleModel = null;
 let TUNING = null;
@@ -157,6 +163,8 @@ let gameState = GAME_STATE.menu;
 let trackSelectorState = "";
 let leaderboardState = "";
 let localRecordsStatus = "";
+let playerProfile = loadPlayerProfile();
+let playerProfileState = getPlayerProfileState();
 let currentSurface = SURFACE.road;
 let previousSurface = SURFACE.road;
 let lapState = LAP_STATE.ready;
@@ -699,14 +707,15 @@ function drawCarShadow() {
 }
 
 function drawCar() {
+  const colors = getCarPaint(playerProfile.color);
   drawCarBody({
     x: car.x,
     y: car.y,
     angle: car.bodyAngleRad,
     drift: driftAmount,
     alpha: 1,
-    bodyColor: "#d64141",
-    noseColor: "#f0d36a",
+    bodyColor: colors.body,
+    noseColor: colors.nose,
     cabinColor: "#151917",
     wheelColor: "#222626",
   });
@@ -785,8 +794,8 @@ function drawGhostCar() {
     y: ghost.y,
     angle: ghost.bodyAngleRad,
     alpha: 0.42,
-    bodyColor: "#eef3ec",
-    noseColor: "#b7efe7",
+    bodyColor: ghost.color ?? "#eef3ec",
+    noseColor: "#eef3ec",
     cabinColor: "#3d4744",
     wheelColor: "#eef3ec",
   });
@@ -802,7 +811,12 @@ function getActiveGhostPose() {
     return null;
   }
 
-  return sampleReplayPose(replay, timeS);
+  const pose = sampleReplayPose(replay, timeS);
+
+  return pose ? {
+    ...pose,
+    color: replay.player?.color ?? bestRecord?.player?.color,
+  } : null;
 }
 
 function sampleReplayPose(replay, timeS) {
@@ -1308,6 +1322,7 @@ function recordFinishTime(track, timeS) {
     trackId: track.id,
     trackName: track.name,
     carId: getActiveCarId(),
+    player: { ...playerProfile },
     timeS,
     distanceM: hasLapTrack(track) ? track.lap.lengthM : track.finishDistanceM,
     valid: true,
@@ -1435,6 +1450,7 @@ function normalizeLeaderboardRecord(record, fallbackTrackId) {
       ? record.trackName
       : TRACKS[trackId]?.name ?? trackId,
     carId: typeof record.carId === "string" && record.carId.length > 0 ? record.carId : getActiveCarId(),
+    player: normalizePlayerProfile(record.player),
     timeS: record.timeS,
     distanceM: Number.isFinite(record.distanceM) ? record.distanceM : null,
     valid: record.valid !== false,
@@ -1449,6 +1465,9 @@ function isValidLeaderboardRecord(record) {
     && record.version === LEADERBOARD_RECORD_VERSION
     && typeof record.trackId === "string"
     && typeof record.carId === "string"
+    && record.player
+    && typeof record.player.name === "string"
+    && typeof record.player.color === "string"
     && Number.isFinite(record.timeS)
     && record.timeS > 0
     && record.valid === true
@@ -1465,6 +1484,87 @@ function getLeaderboardRecordReplayId(record) {
   }
 
   return typeof record.replayId === "string" ? record.replayId : null;
+}
+
+function loadPlayerProfile() {
+  try {
+    return normalizePlayerProfile(JSON.parse(localStorage.getItem(PLAYER_PROFILE_STORAGE_KEY) ?? "{}"));
+  } catch (error) {
+    console.warn("Failed to load player profile", error);
+    return { ...DEFAULT_PLAYER_PROFILE };
+  }
+}
+
+function savePlayerProfile(nextProfile) {
+  playerProfile = normalizePlayerProfile(nextProfile);
+
+  try {
+    localStorage.setItem(PLAYER_PROFILE_STORAGE_KEY, JSON.stringify(playerProfile));
+  } catch (error) {
+    console.warn("Failed to save player profile", error);
+  }
+
+  playerProfileState = getPlayerProfileState();
+  updateTrackSelector(true);
+}
+
+function normalizePlayerProfile(value) {
+  const profile = value && typeof value === "object" ? value : {};
+  const name = typeof profile.name === "string" ? profile.name.trim().slice(0, 18) : "";
+  const color = normalizeHexColor(profile.color);
+
+  return {
+    name: name || DEFAULT_PLAYER_PROFILE.name,
+    color: color ?? DEFAULT_PLAYER_PROFILE.color,
+  };
+}
+
+function normalizeHexColor(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const color = value.trim();
+  return /^#[0-9a-f]{6}$/i.test(color) ? color.toLowerCase() : null;
+}
+
+function getPlayerProfileState() {
+  return `${playerProfile.name}:${playerProfile.color}`;
+}
+
+function getCarPaint(color) {
+  const body = normalizeHexColor(color) ?? DEFAULT_PLAYER_PROFILE.color;
+
+  return {
+    body,
+    nose: mixHexColors(body, "#ffffff", 0.42),
+  };
+}
+
+function mixHexColors(from, to, ratio) {
+  const fromRgb = hexToRgb(from);
+  const toRgb = hexToRgb(to);
+  const amount = clamp(ratio, 0, 1);
+
+  return rgbToHex({
+    r: Math.round(lerp(fromRgb.r, toRgb.r, amount)),
+    g: Math.round(lerp(fromRgb.g, toRgb.g, amount)),
+    b: Math.round(lerp(fromRgb.b, toRgb.b, amount)),
+  });
+}
+
+function hexToRgb(color) {
+  const value = color.replace("#", "");
+
+  return {
+    r: parseInt(value.slice(0, 2), 16),
+    g: parseInt(value.slice(2, 4), 16),
+    b: parseInt(value.slice(4, 6), 16),
+  };
+}
+
+function rgbToHex({ r, g, b }) {
+  return `#${[r, g, b].map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
 }
 
 function createLocalRecordsExport() {
@@ -1549,7 +1649,7 @@ function normalizeLocalRecordsImport(value) {
 
   return {
     leaderboard: normalizeLeaderboardStore(rawLeaderboard),
-    replays: rawReplays.filter(isValidReplayRecord),
+    replays: rawReplays.map(normalizeReplayRecord).filter(isValidReplayRecord),
   };
 }
 
@@ -1599,8 +1699,9 @@ function mergeReplayRecords(base, incoming) {
   const byId = new Map();
 
   for (const replay of [...base, ...incoming]) {
-    if (isValidReplayRecord(replay)) {
-      byId.set(replay.id, replay);
+    const normalized = normalizeReplayRecord(replay);
+    if (isValidReplayRecord(normalized)) {
+      byId.set(normalized.id, normalized);
     }
   }
 
@@ -1706,6 +1807,7 @@ function saveReplayCapture(track, timeS) {
     trackId: track.id,
     trackName: track.name,
     timeS,
+    player: { ...playerProfile },
     createdAt: new Date().toISOString(),
     inputs: replayCapture.inputs,
     keyframes: replayCapture.keyframes,
@@ -1728,7 +1830,7 @@ function loadReplayRecords() {
   try {
     const parsed = JSON.parse(localStorage.getItem(REPLAY_STORAGE_KEY) ?? "[]");
 
-    return Array.isArray(parsed) ? parsed.filter(isValidReplayRecord) : [];
+    return Array.isArray(parsed) ? parsed.map(normalizeReplayRecord).filter(isValidReplayRecord) : [];
   } catch (error) {
     console.warn("Failed to load replays", error);
     return [];
@@ -1748,9 +1850,23 @@ function isValidReplayRecord(replay) {
     && typeof replay === "object"
     && typeof replay.id === "string"
     && typeof replay.trackId === "string"
+    && replay.player
+    && typeof replay.player.name === "string"
+    && typeof replay.player.color === "string"
     && Array.isArray(replay.inputs)
     && Array.isArray(replay.keyframes)
     && replay.keyframes.length > 0;
+}
+
+function normalizeReplayRecord(replay) {
+  if (!replay || typeof replay !== "object") {
+    return null;
+  }
+
+  return {
+    ...replay,
+    player: normalizePlayerProfile(replay.player),
+  };
 }
 
 function startReplayPlayback(replayId) {
@@ -1826,6 +1942,7 @@ function renderTrackSelector() {
   trackPanel.replaceChildren();
 
   if (!compact) {
+    trackPanel.append(createPlayerProfilePanel());
     trackPanel.append(createTrackHint());
   }
 
@@ -1895,6 +2012,7 @@ function updateTrackSelector(force = false) {
     leaderboardTrackId,
     leaderboardState,
     localRecordsStatus,
+    playerProfileState,
   ].join(":");
   if (!force && nextState === trackSelectorState) {
     return;
@@ -1924,7 +2042,7 @@ function createLeaderboardPanel(track) {
   list.className = "leaderboard-list";
 
   const records = getLeaderboardRecordsForTrack(track?.id).slice(0, LEADERBOARD_DISPLAY_LIMIT);
-  leaderboardState = `${track?.id ?? ""}:${records.map((record) => `${record.timeS.toFixed(3)}@${record.createdAt}`).join("|")}`;
+  leaderboardState = `${track?.id ?? ""}:${records.map((record) => `${record.timeS.toFixed(3)}@${record.createdAt}@${record.player.name}@${record.player.color}`).join("|")}`;
 
   if (records.length === 0) {
     const empty = document.createElement("li");
@@ -1935,20 +2053,77 @@ function createLeaderboardPanel(track) {
     records.forEach((record, index) => {
       const item = document.createElement("li");
       const rank = document.createElement("span");
+      const entry = document.createElement("span");
+      const swatch = document.createElement("span");
       const time = document.createElement("strong");
+      const player = document.createElement("span");
       const date = document.createElement("span");
 
       rank.className = "leaderboard-rank";
       rank.textContent = String(index + 1).padStart(2, "0");
+      entry.className = "leaderboard-entry";
+      swatch.className = "leaderboard-swatch";
+      swatch.style.setProperty("--player-color", record.player.color);
       time.textContent = formatTime(record.timeS);
+      player.className = "leaderboard-player";
+      player.textContent = record.player.name;
       date.textContent = formatRecordDate(record.createdAt);
-      item.append(rank, time, date);
+      entry.append(swatch, time, player);
+      item.append(rank, entry, date);
       list.append(item);
     });
   }
 
   panel.append(list);
   panel.append(createLocalRecordsTools());
+
+  return panel;
+}
+
+function createPlayerProfilePanel() {
+  const panel = document.createElement("section");
+  panel.className = "player-profile";
+
+  const name = document.createElement("input");
+  name.className = "player-name-input";
+  name.type = "text";
+  name.maxLength = 18;
+  name.value = playerProfile.name;
+  name.setAttribute("aria-label", "Player name");
+  name.addEventListener("keydown", (event) => {
+    event.stopPropagation();
+    if (event.code === "Enter") {
+      name.blur();
+    }
+  });
+  name.addEventListener("change", () => {
+    savePlayerProfile({
+      ...playerProfile,
+      name: name.value,
+    });
+  });
+
+  const colors = document.createElement("div");
+  colors.className = "player-color-list";
+
+  for (const color of PLAYER_COLOR_OPTIONS) {
+    const option = document.createElement("button");
+    option.type = "button";
+    option.className = "player-color-option";
+    option.style.setProperty("--player-color", color);
+    option.setAttribute("aria-label", `Use car color ${color}`);
+    option.classList.toggle("is-active", color === playerProfile.color);
+    option.addEventListener("click", () => {
+      savePlayerProfile({
+        ...playerProfile,
+        color,
+      });
+      draw(getRenderState());
+    });
+    colors.append(option);
+  }
+
+  panel.append(name, colors);
 
   return panel;
 }
@@ -2013,7 +2188,18 @@ function updateResultPanel() {
   rank.className = "result-rank";
   rank.textContent = formatResultRank(lastFinishResult);
 
-  summary.append(trackName, time, rank);
+  const player = document.createElement("span");
+  player.className = "result-player";
+
+  const swatch = document.createElement("span");
+  swatch.className = "result-player-swatch";
+  swatch.style.setProperty("--player-color", lastFinishResult.player.color);
+
+  const playerName = document.createElement("span");
+  playerName.textContent = lastFinishResult.player.name;
+
+  player.append(swatch, playerName);
+  summary.append(trackName, time, rank, player);
 
   const actions = document.createElement("div");
   actions.className = "result-actions";
