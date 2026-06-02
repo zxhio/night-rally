@@ -845,8 +845,7 @@ function drawGhostCar() {
 
 function getActiveGhostPose() {
   const track = getActiveTrack();
-  const bestRecord = getLeaderboardRecordsForTrack(track.id).find((record) => getLeaderboardRecordReplayId(record));
-  const replay = getReplayRecord(getLeaderboardRecordReplayId(bestRecord));
+  const replay = getReplayRecord(selectedGhostReplayId);
   const timeS = hasLapTrack(track) ? lapTime : testTime;
 
   if (!replay || replay.trackId !== track.id || !Number.isFinite(timeS)) {
@@ -857,7 +856,7 @@ function getActiveGhostPose() {
 
   return pose ? {
     ...pose,
-    color: replay.player?.color ?? bestRecord?.player?.color,
+    color: replay.player?.color,
   } : null;
 }
 
