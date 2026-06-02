@@ -140,7 +140,7 @@ const MAIN_MENU_ITEMS = [
   {
     id: "settings",
     title: "设置",
-    detail: "车手档案和显示数据",
+    detail: "车手档案和详细数据",
   },
 ];
 
@@ -2330,25 +2330,29 @@ function createSettingsPanel() {
   profileTitle.className = "settings-section-title";
   profileTitle.textContent = "车手档案";
 
+  const displayRow = document.createElement("div");
+  displayRow.className = "settings-option-row";
+
   const displayTitle = document.createElement("span");
   displayTitle.className = "settings-section-title";
-  displayTitle.textContent = "显示数据";
+  displayTitle.textContent = "默认显示详细数据";
 
   const display = document.createElement("button");
   display.type = "button";
   display.className = "settings-toggle";
   display.classList.toggle("is-selected", selectedSettingsIndex === SETTINGS_ITEM.display);
-  display.textContent = advancedHudVisible ? "已开启" : "已关闭";
+  display.textContent = displaySettings.advancedHudVisible ? "开启" : "关闭";
   display.addEventListener("click", () => {
     selectedSettingsIndex = SETTINGS_ITEM.display;
-    toggleAdvancedHud();
+    toggleDefaultDetailedHud();
   });
+  displayRow.append(displayTitle, display);
 
   const controls = document.createElement("span");
   controls.className = "start-controls";
   controls.textContent = "↑↓ 选择 · ←→ 调颜色 · Enter 调整 · Esc 返回";
 
-  panel.append(title, profileTitle, createPlayerProfilePanel(), displayTitle, display, controls);
+  panel.append(title, profileTitle, createPlayerProfilePanel(), displayRow, controls);
 
   return panel;
 }
@@ -2903,6 +2907,7 @@ function startTimedRun(trackId = selectedTrackId, ghostReplayId = null) {
   }
 
   keys.clear();
+  applyDefaultDetailedHud();
   activeTrackId = trackId;
   selectedTrackId = trackId;
   selectedGhostReplayId = ghostReplayId;
@@ -2919,6 +2924,7 @@ function restartCurrentTrack() {
   }
 
   keys.clear();
+  applyDefaultDetailedHud();
   resetCar();
   setGameState(GAME_STATE.countdown);
   selectedTrackId = activeTrackId;
@@ -3108,7 +3114,7 @@ function activateSettingsSelection() {
   }
 
   if (selectedSettingsIndex === SETTINGS_ITEM.display) {
-    toggleAdvancedHud();
+    toggleDefaultDetailedHud();
   }
 }
 
@@ -3817,15 +3823,27 @@ function isSessionStarted() {
 
 function toggleAdvancedHud() {
   advancedHudVisible = !advancedHudVisible;
-  saveDisplaySettings({ advancedHudVisible });
   applyAdvancedHudVisibility();
   updateTrackSelector(true);
+}
+
+function toggleDefaultDetailedHud() {
+  const nextVisible = !displaySettings.advancedHudVisible;
+  saveDisplaySettings({ advancedHudVisible: nextVisible });
+  advancedHudVisible = nextVisible;
+  applyAdvancedHudVisibility();
+  updateTrackSelector(true);
+}
+
+function applyDefaultDetailedHud() {
+  advancedHudVisible = displaySettings.advancedHudVisible;
+  applyAdvancedHudVisibility();
 }
 
 function applyAdvancedHudVisibility() {
   hudEl?.classList.toggle("is-advanced", advancedHudVisible);
   if (hudHintEl) {
-    hudHintEl.textContent = advancedHudVisible ? "H 隐藏数据" : "H 显示数据";
+    hudHintEl.textContent = advancedHudVisible ? "H 隐藏详细数据" : "H 显示详细数据";
   }
 }
 

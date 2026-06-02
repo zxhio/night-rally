@@ -171,7 +171,15 @@ body {
   text-transform: uppercase;
 }
 
+.settings-option-row {
+  display: grid;
+  grid-template-columns: 1fr max-content;
+  align-items: center;
+  gap: 10px;
+}
+
 .settings-toggle {
+  min-width: 64px;
   min-height: 34px;
   border: 1px solid rgba(238, 243, 236, 0.18);
   border-radius: 5px;
