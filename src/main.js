@@ -53,6 +53,14 @@ const LAP_STATE = {
   finishing: "finishing",
   finished: "finished",
 };
+const GAME_STATE = {
+  menu: "menu",
+  trackSelect: "track_select",
+  countdown: "countdown",
+  racing: "racing",
+  finishCoast: "finish_coast",
+  result: "result",
+};
 const LAP_PROGRESS_JUMP_BUFFER_M = 18;
 const LAP_FINISH_LINE_WINDOW_M = 90;
 const LAP_SAMPLE_WINDOW_SEGMENTS = 48;
@@ -131,7 +139,7 @@ let yawRateDegS = 0;
 let turnRadiusM = TURN_RADIUS_MAX_M;
 let activeTrackId = null;
 let selectedTrackId = null;
-let trackSelectionConfirmed = false;
+let gameState = GAME_STATE.menu;
 let trackSelectorState = "";
 let leaderboardState = "";
 let currentSurface = SURFACE.road;
@@ -215,12 +223,12 @@ function update(dt) {
   }
 
   const input = readInput();
-  if (lapState === LAP_STATE.finished && hasTimedRunTrack()) {
+  if (gameState === GAME_STATE.result && hasTimedRunTrack()) {
     holdFinishedLap(dt);
     return;
   }
 
-  if (lapState === LAP_STATE.finishing && hasTimedRunTrack()) {
+  if (gameState === GAME_STATE.finishCoast && hasTimedRunTrack()) {
     updateFinishCoast(dt);
     return;
   }
@@ -845,6 +853,7 @@ function updateLapMode(input, dt, frameDistanceM) {
 
     if (input.throttle > 0) {
       lapState = LAP_STATE.running;
+      setGameState(GAME_STATE.racing);
       lapTime = 0;
     }
 
@@ -915,6 +924,7 @@ function updateStraightStartMode(input) {
   }
 
   lapState = LAP_STATE.running;
+  setGameState(GAME_STATE.racing);
   testTime = 0;
   testDistance = 0;
 }
@@ -937,6 +947,7 @@ function holdFinishedLap(dt) {
 
 function startLapFinishCoast() {
   lapState = LAP_STATE.finishing;
+  setGameState(GAME_STATE.finishCoast);
   lapFinishCoastTime = 0;
   lapFinishVx = car.vx;
   lapFinishVy = car.vy;
@@ -976,6 +987,7 @@ function updateFinishCoast(dt) {
   if (lapFinishCoastTime >= LAP_FINISH_COAST_S) {
     stopCarForLapFinish();
     lapState = LAP_STATE.finished;
+    setGameState(GAME_STATE.result);
   }
 
   updateCamera(dt);
@@ -1063,15 +1075,19 @@ function getLapStateLabel() {
     return "Test";
   }
 
-  if (lapState === LAP_STATE.running) {
+  if (gameState === GAME_STATE.trackSelect) {
+    return "Select";
+  }
+
+  if (gameState === GAME_STATE.racing) {
     return "Run";
   }
 
-  if (lapState === LAP_STATE.finishing) {
+  if (gameState === GAME_STATE.finishCoast) {
     return "Coast";
   }
 
-  if (lapState === LAP_STATE.finished) {
+  if (gameState === GAME_STATE.result) {
     return "Finish";
   }
 
@@ -1313,11 +1329,11 @@ function refreshTrackThumbnail(trackId) {
 }
 
 function isTrackSelectionMode() {
-  return !trackSelectionConfirmed && !isSessionStarted();
+  return gameState === GAME_STATE.trackSelect;
 }
 
 function openTrackSelection() {
-  trackSelectionConfirmed = false;
+  setGameState(GAME_STATE.trackSelect);
   selectedTrackId = activeTrackId;
   updateTrackSelector(true);
   updateHud(HUD_UPDATE_INTERVAL_S, true);
@@ -1336,7 +1352,7 @@ function confirmTrackSelection(trackId = selectedTrackId) {
     resetCar();
   }
 
-  trackSelectionConfirmed = true;
+  setGameState(GAME_STATE.countdown);
   selectedTrackId = trackId;
   updateTrackSelector(true);
   updateHud(HUD_UPDATE_INTERVAL_S, true);
@@ -1653,7 +1669,7 @@ function applyTrackData(data) {
   TRACKS = Object.fromEntries(TRACK_LIST.map((track) => [track.id, track]));
   activeTrackId = TRACKS[data.default] ? data.default : TRACK_LIST[0].id;
   selectedTrackId = activeTrackId;
-  trackSelectionConfirmed = false;
+  setGameState(GAME_STATE.trackSelect);
   applyTrackToWorld(getActiveTrack());
   renderTrackSelector();
 }
@@ -2018,15 +2034,18 @@ function hasTimedRunTrack(track = getActiveTrack()) {
 }
 
 function isSessionStarted() {
-  if (!activeTrackId) {
-    return false;
+  return gameState === GAME_STATE.racing
+    || gameState === GAME_STATE.finishCoast
+    || gameState === GAME_STATE.result;
+}
+
+function setGameState(nextState) {
+  if (gameState === nextState) {
+    return;
   }
 
-  if (hasTimedRunTrack()) {
-    return lapState !== LAP_STATE.ready;
-  }
-
-  return testActive;
+  gameState = nextState;
+  trackSelectorState = "";
 }
 
 function drawStatus(message) {

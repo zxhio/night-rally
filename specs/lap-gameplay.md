@@ -4,6 +4,47 @@
 
 当前玩法是每条赛道跑一次记录一次成绩。排行榜只服务本地试玩和调参，不包含账号、联网、删除记录或反作弊。
 
+## 游戏状态
+
+游戏流程由 `gameState` 控制，单圈计时细节仍由 `lapState` 维护。`gameState` 是外层流程状态，后续菜单、结算页、回放和多人都从这里接入。
+
+```txt
+menu          页面加载前的初始状态
+track_select 赛道选择状态，允许上下切换赛道和确认
+countdown     已确认赛道，等待第一次给油起跑
+racing        比赛计时中
+finish_coast  完赛后的短暂滑行
+result        完赛结果状态，车辆停止，等待后续重开或返回选择
+```
+
+当前 `countdown` 还不显示视觉倒计时，只表示赛道已经确认、车辆位于起点、等待玩家起跑。真正倒计时 UI 和起跑节奏在后续 checkpoint 单独实现。
+
+状态流转：
+
+```txt
+menu
+  -> track_select    数据加载完成
+
+track_select
+  -> countdown       确认赛道
+
+countdown
+  -> racing          第一次给油
+  -> track_select    按 R 重置并返回选择
+
+racing
+  -> finish_coast    有效完赛
+  -> track_select    按 R 重置并返回选择
+
+finish_coast
+  -> result          滑行时间结束
+
+result
+  -> track_select    按 R 重置并返回选择
+```
+
+`isSessionStarted()` 只在 `racing / finish_coast / result` 返回 true，用于阻止比赛中切换赛道。`track_select` 和 `countdown` 仍允许选择或重新确认赛道。
+
 ## 完赛规则
 
 环形赛道：
