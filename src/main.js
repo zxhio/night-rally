@@ -58,6 +58,7 @@ const STATIC_LAYER_TILE_SIZE = 1024;
 const STATIC_LAYER_TILE_CACHE_MIN = 24;
 const STATIC_LAYER_TILE_CACHE_EXTRA = 12;
 const STATIC_LAYER_TILE_CACHE_MAX = 40;
+const STATIC_LAYER_TILE_DRAW_OVERLAP = 2;
 const LAP_STATE = {
   ready: "ready",
   running: "running",
@@ -552,22 +553,31 @@ function drawStaticLayer(renderState = getRenderState()) {
     }
 
     visibleKeys.add(tile.key);
-    ctx.drawImage(
-      tile.canvas,
-      tile.padding,
-      tile.padding,
-      tile.width,
-      tile.height,
-      tile.x,
-      tile.y,
-      tile.width,
-      tile.height,
-    );
+    drawStaticLayerTile(tile);
 
     return true;
   });
 
   pruneStaticLayerTileCache(cache, visibleKeys);
+}
+
+function drawStaticLayerTile(tile) {
+  const leftOverlap = tile.x > 0 ? STATIC_LAYER_TILE_DRAW_OVERLAP : 0;
+  const topOverlap = tile.y > 0 ? STATIC_LAYER_TILE_DRAW_OVERLAP : 0;
+  const rightOverlap = tile.x + tile.width < WORLD.width ? STATIC_LAYER_TILE_DRAW_OVERLAP : 0;
+  const bottomOverlap = tile.y + tile.height < WORLD.height ? STATIC_LAYER_TILE_DRAW_OVERLAP : 0;
+
+  ctx.drawImage(
+    tile.canvas,
+    tile.padding - leftOverlap,
+    tile.padding - topOverlap,
+    tile.width + leftOverlap + rightOverlap,
+    tile.height + topOverlap + bottomOverlap,
+    tile.x - leftOverlap,
+    tile.y - topOverlap,
+    tile.width + leftOverlap + rightOverlap,
+    tile.height + topOverlap + bottomOverlap,
+  );
 }
 
 function getStaticLayerTileCache(track) {
