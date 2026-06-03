@@ -2443,16 +2443,22 @@ function createSettingsPanel() {
   title.className = "start-title";
   title.textContent = "设置";
 
-  const profileTitle = document.createElement("span");
-  profileTitle.className = "settings-section-title";
-  profileTitle.textContent = "车手档案";
+  const controls = document.createElement("span");
+  controls.className = "start-controls";
+  controls.textContent = "↑↓ 选择 · Enter 确认 · ←→ 调整 · Esc 返回";
 
-  const displayRow = document.createElement("div");
-  displayRow.className = "settings-option-row";
+  panel.append(title, controls, createPlayerProfilePanel(), createDisplaySettingsPanel());
 
-  const displayTitle = document.createElement("span");
-  displayTitle.className = "settings-section-title";
-  displayTitle.textContent = "默认显示详细数据";
+  return panel;
+}
+
+function createDisplaySettingsPanel() {
+  const panel = document.createElement("section");
+  panel.className = "settings-group";
+
+  const title = document.createElement("span");
+  title.className = "settings-section-title";
+  title.textContent = "显示";
 
   const display = document.createElement("button");
   display.type = "button";
@@ -2481,15 +2487,44 @@ function createSettingsPanel() {
   });
   attachSettingsSwitchDrag(display);
   display.append(displayTrack);
-  displayRow.append(displayTitle, display);
-
-  const controls = document.createElement("span");
-  controls.className = "start-controls";
-  controls.textContent = "↑↓ 选择 · ←→ 调颜色 · Enter 调整 · Esc 返回";
-
-  panel.append(title, profileTitle, createPlayerProfilePanel(), displayRow, controls);
+  panel.append(title, createSettingsRow(
+    SETTINGS_ITEM.display,
+    "默认详细数据",
+    "开局时显示速度、转向和滑移等数据",
+    display,
+  ));
 
   return panel;
+}
+
+function createSettingsRow(itemIndex, titleText, detailText, control) {
+  const row = document.createElement("div");
+  row.className = "settings-row";
+  row.classList.toggle("is-selected", selectedSettingsIndex === itemIndex);
+
+  const copy = document.createElement("span");
+  copy.className = "settings-row-copy";
+
+  const title = document.createElement("span");
+  title.className = "settings-row-title";
+  title.textContent = titleText;
+
+  copy.append(title);
+
+  if (detailText) {
+    const detail = document.createElement("span");
+    detail.className = "settings-row-detail";
+    detail.textContent = detailText;
+    copy.append(detail);
+  }
+
+  const controlWrap = document.createElement("span");
+  controlWrap.className = "settings-row-control";
+  controlWrap.append(control);
+
+  row.append(copy, controlWrap);
+
+  return row;
 }
 
 function createStartPanel(track) {
@@ -2691,11 +2726,14 @@ function createLeaderboardPanel(track) {
 
 function createPlayerProfilePanel() {
   const panel = document.createElement("section");
-  panel.className = "player-profile";
+  panel.className = "settings-group player-profile";
+
+  const title = document.createElement("span");
+  title.className = "settings-section-title";
+  title.textContent = "车手档案";
 
   const name = document.createElement("input");
   name.className = "player-name-input";
-  name.classList.toggle("is-selected", selectedSettingsIndex === SETTINGS_ITEM.name);
   name.type = "text";
   name.maxLength = 18;
   name.value = playerProfile.name;
@@ -2739,7 +2777,11 @@ function createPlayerProfilePanel() {
     colors.append(option);
   });
 
-  panel.append(name, colors);
+  panel.append(
+    title,
+    createSettingsRow(SETTINGS_ITEM.name, "车手名称", "", name),
+    createSettingsRow(SETTINGS_ITEM.color, "车辆颜色", "", colors),
+  );
 
   return panel;
 }

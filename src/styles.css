@@ -155,12 +155,21 @@ body {
 }
 
 .settings-panel {
+  gap: 9px;
   text-align: left;
 }
 
 .settings-panel .start-title,
 .settings-panel .start-controls {
   text-align: center;
+}
+
+.settings-panel .start-controls {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 4px 0 6px;
+  background: rgba(12, 15, 14, 0.84);
 }
 
 .settings-section-title {
@@ -171,21 +180,68 @@ body {
   text-transform: uppercase;
 }
 
-.settings-option-row {
+.settings-group {
   display: grid;
-  grid-template-columns: 1fr max-content;
+  gap: 7px;
+  padding: 7px;
+  border: 1px solid rgba(238, 243, 236, 0.1);
+  border-radius: 4px;
+  background: rgba(238, 243, 236, 0.04);
+}
+
+.settings-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
   align-items: center;
   gap: 10px;
+  min-height: 46px;
+  padding: 8px;
+  border-radius: 4px;
+  background: rgba(238, 243, 236, 0.035);
+}
+
+.settings-row.is-selected {
+  background: rgba(238, 243, 236, 0.13);
+}
+
+.settings-row-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.settings-row-title {
+  overflow: hidden;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-row-detail {
+  color: rgba(238, 243, 236, 0.52);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.settings-row-control {
+  display: flex;
+  justify-content: end;
+  min-width: 0;
 }
 
 .settings-switch {
+  display: block;
+  appearance: none;
   position: relative;
   width: 62px;
   height: 32px;
   padding: 0;
-  border: 1px solid rgba(238, 243, 236, 0.16);
-  border-radius: 5px;
-  background: rgba(9, 12, 11, 0.84);
+  border: 0;
+  background: transparent;
   cursor: pointer;
   touch-action: none;
 }
@@ -196,8 +252,7 @@ body {
   display: block;
   border-radius: 4px;
   background: rgba(238, 243, 236, 0.08);
-  box-shadow: inset 0 0 0 1px rgba(238, 243, 236, 0.08);
-  transition: background 140ms ease, box-shadow 140ms ease;
+  transition: background 140ms ease;
 }
 
 .settings-switch-thumb {
@@ -213,26 +268,8 @@ body {
   transition: transform 140ms ease, background 140ms ease;
 }
 
-.settings-switch-thumb::before {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 10px;
-  height: 2px;
-  border-radius: 2px;
-  background: rgba(9, 12, 11, 0.58);
-  content: "";
-  transform: translate(-50%, -50%);
-}
-
-.settings-switch.is-on {
-  border-color: rgba(189, 247, 221, 0.5);
-  background: rgba(21, 48, 38, 0.84);
-}
-
 .settings-switch.is-on .settings-switch-track {
   background: rgba(98, 206, 145, 0.3);
-  box-shadow: inset 0 0 0 1px rgba(189, 247, 221, 0.26);
 }
 
 .settings-switch.is-on .settings-switch-thumb {
@@ -242,12 +279,6 @@ body {
 
 .settings-switch.is-dragging .settings-switch-thumb {
   transition: none;
-}
-
-.settings-switch.is-selected,
-.player-name-input.is-selected {
-  border-color: rgba(238, 243, 236, 0.72);
-  box-shadow: inset 0 0 0 1px rgba(238, 243, 236, 0.42);
 }
 
 .record-list {
@@ -408,7 +439,7 @@ body {
 }
 
 .player-name-input {
-  width: 100%;
+  width: 156px;
   min-height: 28px;
   border: 1px solid rgba(238, 243, 236, 0.16);
   border-radius: 4px;
@@ -427,13 +458,13 @@ body {
 
 .player-color-list {
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  grid-template-columns: repeat(6, 18px);
   gap: 5px;
 }
 
 .player-color-option {
-  aspect-ratio: 1;
-  min-width: 0;
+  width: 18px;
+  height: 18px;
   border: 1px solid rgba(238, 243, 236, 0.18);
   border-radius: 4px;
   background: var(--player-color);
