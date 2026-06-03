@@ -44,6 +44,8 @@ const SPEED_SCALE = KMH_PER_GAME_SPEED * PX_PER_METER / 3.6;
 const METERS_PER_PIXEL = 1 / PX_PER_METER;
 const STANDARD_G = 9.80665;
 const SKID_MARKS_MAX = 260;
+const SKID_MARK_ALPHA_BUCKETS = 8;
+const SKID_MARK_MAX_ALPHA = 0.44;
 const DRIFT_ACTIVE_MIN_AMOUNT = 0.04;
 const DRIFT_RESET_MIN_AMOUNT = 0.005;
 const DRIFT_TRAIL_MIN_AMOUNT = 0.08;
@@ -289,7 +291,17 @@ let racePausePanel = null;
 let hudUpdateAccumulator = HUD_UPDATE_INTERVAL_S;
 let thumbnailUpdateAccumulator = THUMBNAIL_UPDATE_INTERVAL_S;
 let advancedHudVisible = displaySettings.advancedHudVisible;
-const skidMarks = [];
+const frameRenderState = {
+  track: null,
+  camera,
+  car,
+  view,
+};
+const grassSurfacePool = [createGrassSurface(), createGrassSurface()];
+let grassSurfacePoolIndex = 0;
+const skidMarks = Array.from({ length: SKID_MARKS_MAX }, createEmptySkidMark);
+let skidMarkStartIndex = 0;
+let skidMarkCount = 0;
 let staticLayerTileCache = null;
 
 applyAdvancedHudVisibility();
@@ -369,7 +381,7 @@ function loop(now) {
 
   update(dt);
   if (!isMenuOverlayMode()) {
-    draw(getRenderState());
+    draw();
   }
   requestAnimationFrame(loop);
 }
@@ -513,12 +525,8 @@ function updateDrivingSimulation(input, dt) {
 }
 
 function getRenderState() {
-  return {
-    track: getActiveTrack(),
-    camera: { ...camera },
-    car: { ...car },
-    view: { ...view },
-  };
+  frameRenderState.track = getActiveTrack();
+  return frameRenderState;
 }
 
 function draw(renderState = getRenderState()) {
@@ -1200,54 +1208,116 @@ function addSkidMarks(forward, right, moveDirection, intensity, speedKmh) {
   const length = 8 + intensity * 18;
   const alpha = 0.1 + intensity * 0.34;
 
-  skidMarks.push(
-    {
-      x1: rearX + right.x * halfTrack,
-      y1: rearY + right.y * halfTrack,
-      x2: rearX + right.x * halfTrack - moveDirection.x * length,
-      y2: rearY + right.y * halfTrack - moveDirection.y * length,
-      alpha,
-      life: 1,
-    },
-    {
-      x1: rearX - right.x * halfTrack,
-      y1: rearY - right.y * halfTrack,
-      x2: rearX - right.x * halfTrack - moveDirection.x * length,
-      y2: rearY - right.y * halfTrack - moveDirection.y * length,
-      alpha,
-      life: 1,
-    },
+  addSkidMark(
+    rearX + right.x * halfTrack,
+    rearY + right.y * halfTrack,
+    rearX + right.x * halfTrack - moveDirection.x * length,
+    rearY + right.y * halfTrack - moveDirection.y * length,
+    alpha,
   );
+  addSkidMark(
+    rearX - right.x * halfTrack,
+    rearY - right.y * halfTrack,
+    rearX - right.x * halfTrack - moveDirection.x * length,
+    rearY - right.y * halfTrack - moveDirection.y * length,
+    alpha,
+  );
+}
 
-  if (skidMarks.length > SKID_MARKS_MAX) {
-    skidMarks.splice(0, skidMarks.length - SKID_MARKS_MAX);
+function createEmptySkidMark() {
+  return {
+    x1: 0,
+    y1: 0,
+    x2: 0,
+    y2: 0,
+    alpha: 0,
+    life: 0,
+  };
+}
+
+function addSkidMark(x1, y1, x2, y2, alpha) {
+  const index = skidMarkCount < SKID_MARKS_MAX
+    ? (skidMarkStartIndex + skidMarkCount) % SKID_MARKS_MAX
+    : skidMarkStartIndex;
+  const mark = skidMarks[index];
+
+  mark.x1 = x1;
+  mark.y1 = y1;
+  mark.x2 = x2;
+  mark.y2 = y2;
+  mark.alpha = clamp(alpha, 0, SKID_MARK_MAX_ALPHA);
+  mark.life = 1;
+
+  if (skidMarkCount < SKID_MARKS_MAX) {
+    skidMarkCount += 1;
+  } else {
+    skidMarkStartIndex = (skidMarkStartIndex + 1) % SKID_MARKS_MAX;
   }
 }
 
 function drawSkidMarks() {
+  if (skidMarkCount === 0) {
+    return;
+  }
+
   ctx.save();
   ctx.lineCap = "round";
   ctx.lineWidth = 3;
 
-  for (const mark of skidMarks) {
-    ctx.strokeStyle = `rgba(12, 14, 13, ${mark.alpha * mark.life})`;
+  for (let bucket = 0; bucket < SKID_MARK_ALPHA_BUCKETS; bucket += 1) {
+    const minAlpha = bucket * SKID_MARK_MAX_ALPHA / SKID_MARK_ALPHA_BUCKETS;
+    const maxAlpha = (bucket + 1) * SKID_MARK_MAX_ALPHA / SKID_MARK_ALPHA_BUCKETS;
+    const strokeAlpha = (minAlpha + maxAlpha) / 2;
+    let hasPath = false;
+
     ctx.beginPath();
-    ctx.moveTo(mark.x1, mark.y1);
-    ctx.lineTo(mark.x2, mark.y2);
-    ctx.stroke();
-    mark.life *= DRIFT_TRAIL_FADE;
+
+    forEachSkidMark((mark) => {
+      const alpha = mark.alpha * mark.life;
+      if (alpha <= minAlpha || alpha > maxAlpha) {
+        return;
+      }
+
+      ctx.moveTo(mark.x1, mark.y1);
+      ctx.lineTo(mark.x2, mark.y2);
+      hasPath = true;
+    });
+
+    if (hasPath) {
+      ctx.strokeStyle = `rgba(12, 14, 13, ${strokeAlpha})`;
+      ctx.stroke();
+    }
   }
 
-  let expiredCount = 0;
-  while (expiredCount < skidMarks.length && skidMarks[expiredCount].life < 0.08) {
-    expiredCount += 1;
-  }
-
-  if (expiredCount > 0) {
-    skidMarks.splice(0, expiredCount);
-  }
+  fadeSkidMarks();
+  pruneExpiredSkidMarks();
 
   ctx.restore();
+}
+
+function forEachSkidMark(visit) {
+  for (let offset = 0; offset < skidMarkCount; offset += 1) {
+    visit(skidMarks[(skidMarkStartIndex + offset) % SKID_MARKS_MAX]);
+  }
+}
+
+function fadeSkidMarks() {
+  forEachSkidMark((mark) => {
+    mark.life *= DRIFT_TRAIL_FADE;
+  });
+}
+
+function pruneExpiredSkidMarks() {
+  while (skidMarkCount > 0 && skidMarks[skidMarkStartIndex].life < 0.08) {
+    skidMarks[skidMarkStartIndex].life = 0;
+    skidMarkStartIndex = (skidMarkStartIndex + 1) % SKID_MARKS_MAX;
+    skidMarkCount -= 1;
+  }
+}
+
+function clearSkidMarks() {
+  skidMarkStartIndex = 0;
+  skidMarkCount = 0;
 }
 
 function createEmptyInputFrame() {
@@ -3093,7 +3163,7 @@ function createPlayerProfilePanel() {
         ...playerProfile,
         color,
       });
-      draw(getRenderState());
+      draw();
     });
     colors.append(option);
   });
@@ -3989,7 +4059,7 @@ function selectSettingsColor(direction) {
     ...playerProfile,
     color: PLAYER_COLOR_OPTIONS[selectedSettingsColorIndex],
   });
-  draw(getRenderState());
+  draw();
 }
 
 function activateSettingsSelection() {
@@ -4005,7 +4075,7 @@ function activateSettingsSelection() {
       ...playerProfile,
       color: PLAYER_COLOR_OPTIONS[selectedSettingsColorIndex],
     });
-    draw(getRenderState());
+    draw();
     return;
   }
 
@@ -4288,7 +4358,7 @@ function resetCar() {
   slipDeg = 0;
   yawRateDegS = 0;
   turnRadiusM = TURN_RADIUS_MAX_M;
-  skidMarks.length = 0;
+  clearSkidMarks();
   currentSurface = getSurfaceAt(car.x, car.y);
   previousSurface = currentSurface;
   resetLapMode();
@@ -5017,6 +5087,12 @@ function getGrassEdgeLimit(track) {
   return track.roadHalfWidth + track.curbWidth + track.grassWidth;
 }
 
+function createGrassSurface() {
+  return {
+    ...SURFACE.grass,
+  };
+}
+
 function getGrassSurface(track, distance, carHalfWidth) {
   const grassWidth = Math.max(1, getGrassEdgeLimit(track) - track.roadHalfWidth);
   const carWidth = Math.max(1, carHalfWidth * 2);
@@ -5024,13 +5100,14 @@ function getGrassSurface(track, distance, carHalfWidth) {
   const carOffRoad = clamp(outsideWheelDepth / carWidth, 0, 1);
   const grassDepth = clamp(outsideWheelDepth / grassWidth, 0, 1);
   const penalty = carOffRoad * smoothstep(0, 1, grassDepth);
+  const surface = grassSurfacePool[grassSurfacePoolIndex];
 
-  return {
-    ...SURFACE.grass,
-    speedDropScale: lerp(SURFACE.road.speedDropScale, GRASS_SURFACE.speedDropMin, penalty),
-    accelScale: lerp(SURFACE.road.accelScale, GRASS_SURFACE.accelMin, penalty),
-    steer: lerp(SURFACE.road.steer, GRASS_SURFACE.steerMin, penalty),
-  };
+  grassSurfacePoolIndex = (grassSurfacePoolIndex + 1) % grassSurfacePool.length;
+  surface.speedDropScale = lerp(SURFACE.road.speedDropScale, GRASS_SURFACE.speedDropMin, penalty);
+  surface.accelScale = lerp(SURFACE.road.accelScale, GRASS_SURFACE.accelMin, penalty);
+  surface.steer = lerp(SURFACE.road.steer, GRASS_SURFACE.steerMin, penalty);
+
+  return surface;
 }
 
 function getCarHalfWidth() {
