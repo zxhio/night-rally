@@ -2309,7 +2309,9 @@ function createRaceTrackPanel() {
   title.className = "start-title";
   title.textContent = "竞速模式";
 
-  const hint = createTrackHint();
+  const controls = document.createElement("span");
+  controls.className = "start-controls";
+  controls.textContent = "↑↓ 选择 · Enter 确认";
 
   const trackList = document.createElement("div");
   trackList.className = "start-track-list";
@@ -2317,11 +2319,7 @@ function createRaceTrackPanel() {
     trackList.append(createTrackCard(candidate, false, () => openTrackAction(candidate.id), "is-race-pick"));
   });
 
-  const controls = document.createElement("span");
-  controls.className = "start-controls";
-  controls.textContent = "↑↓ 切换 · Enter 确认 · Esc 返回";
-
-  panel.append(title, controls, hint, trackList);
+  panel.append(title, controls, trackList);
 
   return panel;
 }
@@ -2344,7 +2342,7 @@ function createTrackActionPanel() {
 
   const controls = document.createElement("span");
   controls.className = "start-controls";
-  controls.textContent = "↑↓ 选择 · Enter 确认 · Esc 返回地图";
+  controls.textContent = "↑↓ 选择 · Enter 确认";
 
   const actions = document.createElement("div");
   actions.className = "action-list";
@@ -2369,7 +2367,7 @@ function createTrackActionPanel() {
     actions.append(button);
   });
 
-  panel.append(title, trackName, controls, actions);
+  panel.append(title, controls, trackName, actions);
 
   return panel;
 }
@@ -2423,9 +2421,9 @@ function createRecordSelectionPanel() {
 
   const controls = document.createElement("span");
   controls.className = "start-controls";
-  controls.textContent = options.length > 0 ? "↑↓ 选择 · Enter 挑战 · Esc 返回" : "Esc 返回";
+  controls.textContent = options.length > 0 ? "↑↓ 选择 · Enter 挑战" : "Backspace 返回";
 
-  panel.append(title, trackName, list, controls);
+  panel.append(title, controls, trackName, list);
 
   return panel;
 }
@@ -2447,9 +2445,9 @@ function createRecordToolsPanel() {
 
   const controls = document.createElement("span");
   controls.className = "start-controls";
-  controls.textContent = "Esc / Backspace 返回";
+  controls.textContent = "Backspace 返回";
 
-  panel.append(title, trackName, createLeaderboardPanel(track), controls);
+  panel.append(title, controls, trackName, createLeaderboardPanel(track));
 
   return panel;
 }
@@ -2469,9 +2467,9 @@ function createMultiplayerPanel() {
 
   const controls = document.createElement("span");
   controls.className = "start-controls";
-  controls.textContent = "Esc / Backspace 返回";
+  controls.textContent = "Backspace 返回";
 
-  panel.append(title, message, controls);
+  panel.append(title, controls, message);
 
   return panel;
 }
@@ -2487,7 +2485,7 @@ function createSettingsPanel() {
 
   const controls = document.createElement("span");
   controls.className = "start-controls";
-  controls.textContent = "↑↓ 选择 · Enter 确认 · ←→ 调整 · Esc 返回";
+  controls.textContent = "↑↓ 选择 · Enter 确认";
 
   panel.append(title, controls, createPlayerProfilePanel(), createDisplaySettingsPanel());
 
@@ -2672,7 +2670,7 @@ function createTrackHint() {
 
   const subtitle = document.createElement("span");
   subtitle.className = "track-hint-subtitle";
-  subtitle.textContent = "↑↓ 切换 · Enter 确认";
+  subtitle.textContent = "↑↓ 选择 · Enter 确认";
 
   hint.append(title, subtitle);
 
@@ -3111,7 +3109,7 @@ function renderRacePausePanel() {
 
   const hint = document.createElement("span");
   hint.className = "race-pause-hint";
-  hint.textContent = "←→ 选择 · Enter 确认 · Esc 继续";
+  hint.textContent = "←→ 选择 · Enter 确认";
 
   const actions = document.createElement("div");
   actions.className = "race-pause-actions";
