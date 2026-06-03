@@ -284,6 +284,7 @@ let inputTick = 0;
 let inputFrame = createEmptyInputFrame();
 let replayCapture = createEmptyReplayCapture();
 let replayPlayback = null;
+let sessionReplayRecords = [];
 let racePausePanel = null;
 let hudUpdateAccumulator = HUD_UPDATE_INTERVAL_S;
 let thumbnailUpdateAccumulator = THUMBNAIL_UPDATE_INTERVAL_S;
@@ -1372,9 +1373,7 @@ function updateLapMode(input, dt, frameDistanceM) {
     resetLapCheckpointProgress();
 
     if (input.throttle > 0) {
-      lapState = LAP_STATE.running;
-      setGameState(GAME_STATE.racing);
-      lapTime = 0;
+      startLapTimedRun(track);
     }
 
     return;
@@ -1440,15 +1439,35 @@ function updateStraightFinishMode() {
   }
 }
 
-function updateStraightStartMode(input) {
-  if (!hasStraightFinish() || lapState !== LAP_STATE.ready || input.throttle <= 0) {
-    return;
-  }
+function startLapTimedRun(track) {
+  const sample = getLapTrackSample(track, car.x, car.y);
 
+  lapLastProgressM = sample.progressPx * METERS_PER_PIXEL;
+  lapLastSegmentIndex = sample.segmentIndex;
+  lapDistance = 0;
+  lapProgress = 0;
+  resetLapCheckpointProgress();
+  lapState = LAP_STATE.running;
+  setGameState(GAME_STATE.racing);
+  lapTime = 0;
+  startReplayCapture(track);
+}
+
+function startStraightTimedRun(track) {
   lapState = LAP_STATE.running;
   setGameState(GAME_STATE.racing);
   testTime = 0;
   testDistance = 0;
+  startReplayCapture(track);
+}
+
+function updateStraightStartMode(input) {
+  const track = getActiveTrack();
+  if (!hasStraightFinish(track) || lapState !== LAP_STATE.ready || input.throttle <= 0) {
+    return;
+  }
+
+  startStraightTimedRun(track);
 }
 
 function resetLapCheckpointProgress() {
@@ -2146,13 +2165,32 @@ function mergeReplayRecords(base, incoming) {
 }
 
 function saveReplayRecords(replays) {
-  try {
-    localStorage.setItem(REPLAY_STORAGE_KEY, JSON.stringify(replays.slice(0, REPLAY_MAX_RECORDS)));
-    return true;
-  } catch (error) {
-    console.warn("Failed to save replays", error);
-    return false;
+  const normalized = replays
+    .map(normalizeReplayRecord)
+    .filter(isValidReplayRecord)
+    .slice(0, REPLAY_MAX_RECORDS);
+  let lastError = null;
+
+  for (let count = normalized.length; count >= 0; count -= 1) {
+    try {
+      localStorage.setItem(REPLAY_STORAGE_KEY, JSON.stringify(normalized.slice(0, count)));
+      if (count < normalized.length) {
+        console.warn(`Saved ${count} of ${normalized.length} replays after pruning old records`);
+      }
+
+      return count > 0 || normalized.length === 0;
+    } catch (error) {
+      lastError = error;
+      try {
+        localStorage.removeItem(REPLAY_STORAGE_KEY);
+      } catch (removeError) {
+        lastError = removeError;
+      }
+    }
   }
+
+  console.warn("Failed to save replays", lastError);
+  return false;
 }
 
 function setLocalRecordsStatus(message) {
@@ -2200,6 +2238,11 @@ function startReplayCapture(track) {
 
 function captureReplayInput(input) {
   if (!replayCapture.active || gameState !== GAME_STATE.racing) {
+    return;
+  }
+
+  const lastInput = replayCapture.inputs[replayCapture.inputs.length - 1];
+  if (lastInput && lastInput.throttle === input.throttle && lastInput.steer === input.steer) {
     return;
   }
 
@@ -2261,6 +2304,8 @@ function saveReplayCapture(track, timeS) {
     inputs: replayCapture.inputs,
     keyframes: replayCapture.keyframes,
   };
+  rememberSessionReplay(replay);
+
   const replays = loadReplayRecords()
     .filter((candidate) => isValidReplayRecord(candidate) && candidate.id !== replay.id);
   replays.unshift(replay);
@@ -2269,20 +2314,34 @@ function saveReplayCapture(track, timeS) {
   replayCapture = createEmptyReplayCapture();
 
   if (!saved) {
-    return null;
+    console.warn("Replay is available for this session only");
   }
 
   return replay.id;
+}
+
+function rememberSessionReplay(replay) {
+  const normalized = normalizeReplayRecord(replay);
+  if (!isValidReplayRecord(normalized)) {
+    return;
+  }
+
+  sessionReplayRecords = [normalized, ...sessionReplayRecords.filter((candidate) => candidate.id !== normalized.id)]
+    .slice(0, REPLAY_MAX_RECORDS);
 }
 
 function loadReplayRecords() {
   try {
     const parsed = JSON.parse(localStorage.getItem(REPLAY_STORAGE_KEY) ?? "[]");
 
-    return Array.isArray(parsed) ? parsed.map(normalizeReplayRecord).filter(isValidReplayRecord) : [];
+    const stored = Array.isArray(parsed)
+      ? parsed.map(normalizeReplayRecord).filter(isValidReplayRecord)
+      : [];
+
+    return mergeReplayRecords(stored, sessionReplayRecords);
   } catch (error) {
     console.warn("Failed to load replays", error);
-    return [];
+    return mergeReplayRecords([], sessionReplayRecords);
   }
 }
 
