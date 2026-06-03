@@ -4,11 +4,11 @@
   "type": "straight",
   "world": {
     "width": 30600,
-    "height": 900
+    "height": 230
   },
   "start": {
     "x": 260,
-    "y": 450,
+    "y": 115,
     "angle": 0
   },
   "runwayWidthM": 14,

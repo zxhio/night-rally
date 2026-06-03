@@ -742,10 +742,6 @@ function drawWorld(renderState = getRenderState(), targetCtx = ctx, visibleBound
     targetCtx.lineTo(x, WORLD.height);
   }
   targetCtx.stroke();
-
-  targetCtx.strokeStyle = track.type === "circuit" ? "rgba(54, 41, 28, 0.42)" : "#111514";
-  targetCtx.lineWidth = 24;
-  targetCtx.strokeRect(12, 12, WORLD.width - 24, WORLD.height - 24);
 }
 
 function getVisibleWorldBounds(padding = 160, cameraState = camera, viewState = view) {
@@ -1584,22 +1580,45 @@ function updateCamera(dt) {
 }
 
 function getCameraTarget() {
-  const minZoom = isCircuitTrack() ? 0.48 : 0.7;
-  const maxZoom = isCircuitTrack() ? 0.78 : 1;
-  const baseZoom = clamp(Math.min(view.width / 1040, view.height / 560), minZoom, maxZoom);
+  const track = getActiveTrack();
+  const baseZoom = getCameraBaseZoom(track);
   const lookAhead = angleVector(car.bodyAngleRad);
   const unclampedTargetX = car.x + lookAhead.x * 22;
-  const unclampedTargetY = car.y + lookAhead.y * 8;
-  const halfViewW = view.width / 2 / baseZoom;
-  const halfViewH = view.height / 2 / baseZoom;
-  const targetX = clamp(unclampedTargetX, halfViewW, WORLD.width - halfViewW);
-  const targetY = clamp(unclampedTargetY, halfViewH, WORLD.height - halfViewH);
+  const unclampedTargetY = track?.type === "straight" ? WORLD.runwayY : car.y + lookAhead.y * 8;
+  const halfViewW = getCameraHalfViewSize(view.width, baseZoom);
+  const halfViewH = getCameraHalfViewSize(view.height, baseZoom);
+  const targetX = clampCameraAxis(unclampedTargetX, halfViewW, WORLD.width - halfViewW);
+  const targetY = clampCameraAxis(unclampedTargetY, halfViewH, WORLD.height - halfViewH);
 
   return {
     x: targetX,
     y: targetY,
     zoom: baseZoom,
   };
+}
+
+function getCameraBaseZoom(track = getActiveTrack()) {
+  if (track?.type === "straight") {
+    return 1;
+  }
+
+  const isCircuit = track?.type === "circuit";
+  const minZoom = isCircuit ? 0.48 : 0.7;
+  const maxZoom = isCircuit ? 0.78 : 1;
+
+  return clamp(Math.min(view.width / 1040, view.height / 560), minZoom, maxZoom);
+}
+
+function getCameraHalfViewSize(screenSize, zoom) {
+  return Math.max(0, screenSize / 2) / Math.max(zoom, 0.001);
+}
+
+function clampCameraAxis(value, min, max) {
+  if (min > max) {
+    return (min + max) / 2;
+  }
+
+  return clamp(value, min, max);
 }
 
 function updateHud(dt = HUD_UPDATE_INTERVAL_S, force = false) {
@@ -4193,7 +4212,7 @@ function resetCar() {
   const track = TRACKS[activeTrackId];
   applyTrackToWorld(track);
   car.x = track.startX;
-  car.y = track.startY;
+  car.y = getTrackStartY(track);
   car.angle = track.startAngle;
   car.bodyAngleRad = track.startAngle;
   car.moveAngleRad = track.startAngle;
@@ -4264,7 +4283,25 @@ function resize() {
   canvas.style.width = `${width}px`;
   canvas.style.height = `${height}px`;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  invalidateStaticLayerCache();
+
+  if (activeTrackId) {
+    const track = getActiveTrack();
+    const previousRunwayY = WORLD.runwayY;
+    applyTrackToWorld(track);
+
+    if (track.type === "straight") {
+      const runwayDeltaY = WORLD.runwayY - previousRunwayY;
+      car.y += runwayDeltaY;
+      camera.y += runwayDeltaY;
+    }
+
+    const cameraTarget = getCameraTarget();
+    camera.x = cameraTarget.x;
+    camera.y = cameraTarget.y;
+    camera.zoom = cameraTarget.zoom;
+  } else {
+    invalidateStaticLayerCache();
+  }
 }
 
 async function loadJson(url) {
@@ -4360,11 +4397,30 @@ function normalizeTrack(rawTrack) {
 }
 
 function applyTrackToWorld(track) {
-  WORLD.width = track.width;
-  WORLD.height = track.height;
-  WORLD.runwayY = track.startY;
+  const runtimeWorld = getRuntimeWorldSize(track);
+
+  WORLD.width = runtimeWorld.width;
+  WORLD.height = runtimeWorld.height;
+  WORLD.runwayY = getTrackStartY(track);
   WORLD.runwayWidth = track.runwayWidth ?? 14 * PX_PER_METER;
   invalidateStaticLayerCache();
+}
+
+function getRuntimeWorldSize(track) {
+  const zoom = getCameraBaseZoom(track);
+
+  return {
+    width: Math.max(track.width, getRuntimeWorldAxisSize(view.width, zoom)),
+    height: Math.max(track.height, getRuntimeWorldAxisSize(view.height, zoom)),
+  };
+}
+
+function getRuntimeWorldAxisSize(screenSize, zoom) {
+  return Math.max(0, screenSize) / Math.max(zoom, 0.001);
+}
+
+function getTrackStartY(track) {
+  return track?.type === "straight" ? WORLD.height / 2 : track.startY;
 }
 
 function buildDirtSpecks(track) {
