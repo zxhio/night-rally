@@ -54,8 +54,10 @@ const BRAKE_TRAIL_INTENSITY = 0.3;
 const TURN_RADIUS_MAX_M = 999;
 const HUD_UPDATE_INTERVAL_S = 0.1;
 const THUMBNAIL_UPDATE_INTERVAL_S = 0.12;
-const STATIC_LAYER_CACHE_MARGIN = 900;
-const STATIC_LAYER_CACHE_MAX_PIXELS = 28000000;
+const STATIC_LAYER_TILE_SIZE = 1024;
+const STATIC_LAYER_TILE_CACHE_MIN = 24;
+const STATIC_LAYER_TILE_CACHE_EXTRA = 12;
+const STATIC_LAYER_TILE_CACHE_MAX = 40;
 const LAP_STATE = {
   ready: "ready",
   running: "running",
@@ -286,7 +288,7 @@ let hudUpdateAccumulator = HUD_UPDATE_INTERVAL_S;
 let thumbnailUpdateAccumulator = THUMBNAIL_UPDATE_INTERVAL_S;
 let advancedHudVisible = displaySettings.advancedHudVisible;
 const skidMarks = [];
-let staticLayerCache = null;
+let staticLayerTileCache = null;
 
 applyAdvancedHudVisibility();
 
@@ -535,69 +537,166 @@ function draw(renderState = getRenderState()) {
 }
 
 function drawStaticLayer(renderState = getRenderState()) {
-  const cache = getStaticLayerCache(renderState);
-  if (cache) {
-    ctx.drawImage(cache.canvas, cache.x, cache.y);
-    return;
-  }
-
-  drawWorld(renderState);
-  drawTrack(renderState);
-}
-
-function getStaticLayerCache(renderState) {
-  const track = renderState.track;
+  const cache = getStaticLayerTileCache(renderState.track);
   const visibleBounds = normalizeStaticLayerBounds(
     getVisibleWorldBounds(0, renderState.camera, renderState.view),
   );
+  const visibleKeys = new Set();
 
-  if (isStaticLayerCacheValid(staticLayerCache, track, visibleBounds)) {
-    return staticLayerCache;
-  }
+  forEachStaticLayerTile(visibleBounds, (column, row) => {
+    const tile = getStaticLayerTile(cache, renderState, column, row);
+    if (!tile) {
+      drawWorld(renderState);
+      drawTrack(renderState);
+      return false;
+    }
 
-  const cacheBounds = normalizeStaticLayerBounds(
-    getVisibleWorldBounds(STATIC_LAYER_CACHE_MARGIN, renderState.camera, renderState.view),
-  );
-  const width = Math.max(1, cacheBounds.maxX - cacheBounds.minX);
-  const height = Math.max(1, cacheBounds.maxY - cacheBounds.minY);
+    visibleKeys.add(tile.key);
+    ctx.drawImage(
+      tile.canvas,
+      tile.padding,
+      tile.padding,
+      tile.width,
+      tile.height,
+      tile.x,
+      tile.y,
+      tile.width,
+      tile.height,
+    );
 
-  if (width * height > STATIC_LAYER_CACHE_MAX_PIXELS) {
-    staticLayerCache = null;
-    return null;
-  }
+    return true;
+  });
 
-  const nextCache = createStaticLayerCache(renderState, cacheBounds, width, height);
-  staticLayerCache = nextCache;
-  return staticLayerCache;
+  pruneStaticLayerTileCache(cache, visibleKeys);
 }
 
-function createStaticLayerCache(renderState, bounds, width, height) {
-  const cacheCanvas = document.createElement("canvas");
-  cacheCanvas.width = width;
-  cacheCanvas.height = height;
-  const cacheCtx = cacheCanvas.getContext("2d");
+function getStaticLayerTileCache(track) {
+  if (
+    staticLayerTileCache
+    && staticLayerTileCache.trackId === track.id
+    && staticLayerTileCache.worldWidth === WORLD.width
+    && staticLayerTileCache.worldHeight === WORLD.height
+  ) {
+    return staticLayerTileCache;
+  }
 
-  if (!cacheCtx) {
+  staticLayerTileCache = {
+    trackId: track.id,
+    worldWidth: WORLD.width,
+    worldHeight: WORLD.height,
+    tiles: new Map(),
+    tick: 0,
+  };
+
+  return staticLayerTileCache;
+}
+
+function forEachStaticLayerTile(bounds, visit) {
+  const startColumn = Math.floor(bounds.minX / STATIC_LAYER_TILE_SIZE);
+  const endColumn = Math.floor(Math.max(bounds.minX, bounds.maxX - 1) / STATIC_LAYER_TILE_SIZE);
+  const startRow = Math.floor(bounds.minY / STATIC_LAYER_TILE_SIZE);
+  const endRow = Math.floor(Math.max(bounds.minY, bounds.maxY - 1) / STATIC_LAYER_TILE_SIZE);
+
+  for (let row = startRow; row <= endRow; row += 1) {
+    for (let column = startColumn; column <= endColumn; column += 1) {
+      if (visit(column, row) === false) {
+        return;
+      }
+    }
+  }
+}
+
+function getStaticLayerTile(cache, renderState, column, row) {
+  const key = `${column}:${row}`;
+  const cachedTile = cache.tiles.get(key);
+
+  cache.tick += 1;
+
+  if (cachedTile) {
+    cachedTile.lastUsed = cache.tick;
+    return cachedTile;
+  }
+
+  const tile = createStaticLayerTile(renderState, column, row, key, cache.tick);
+  if (!tile) {
     return null;
   }
 
-  cacheCtx.save();
-  cacheCtx.translate(-bounds.minX, -bounds.minY);
-  drawWorld(renderState, cacheCtx, bounds);
-  drawTrack(renderState, cacheCtx);
-  cacheCtx.restore();
+  cache.tiles.set(key, tile);
+  return tile;
+}
+
+function createStaticLayerTile(renderState, column, row, key, lastUsed) {
+  const x = column * STATIC_LAYER_TILE_SIZE;
+  const y = row * STATIC_LAYER_TILE_SIZE;
+  const width = Math.min(STATIC_LAYER_TILE_SIZE, WORLD.width - x);
+  const height = Math.min(STATIC_LAYER_TILE_SIZE, WORLD.height - y);
+
+  if (width <= 0 || height <= 0) {
+    return null;
+  }
+
+  const padding = getStaticLayerTilePadding(renderState.track);
+  const tileCanvas = document.createElement("canvas");
+  tileCanvas.width = width + padding * 2;
+  tileCanvas.height = height + padding * 2;
+  const tileCtx = tileCanvas.getContext("2d");
+
+  if (!tileCtx) {
+    return null;
+  }
+
+  const paddedBounds = {
+    minX: Math.max(0, x - padding),
+    maxX: Math.min(WORLD.width, x + width + padding),
+    minY: Math.max(0, y - padding),
+    maxY: Math.min(WORLD.height, y + height + padding),
+  };
+
+  tileCtx.save();
+  tileCtx.translate(padding - x, padding - y);
+  drawWorld(renderState, tileCtx, paddedBounds);
+  drawTrack(renderState, tileCtx);
+  tileCtx.restore();
 
   return {
-    canvas: cacheCanvas,
-    trackId: renderState.track.id,
-    worldWidth: WORLD.width,
-    worldHeight: WORLD.height,
-    x: bounds.minX,
-    y: bounds.minY,
+    key,
+    canvas: tileCanvas,
+    x,
+    y,
     width,
     height,
-    bounds,
+    padding,
+    lastUsed,
   };
+}
+
+function getStaticLayerTilePadding(track) {
+  if (track.type !== "circuit") {
+    return 80;
+  }
+
+  return Math.ceil(track.roadHalfWidth + track.curbWidth + track.grassWidth + 12);
+}
+
+function pruneStaticLayerTileCache(cache, visibleKeys) {
+  const maxTiles = Math.min(
+    STATIC_LAYER_TILE_CACHE_MAX,
+    Math.max(STATIC_LAYER_TILE_CACHE_MIN, visibleKeys.size + STATIC_LAYER_TILE_CACHE_EXTRA),
+  );
+
+  if (cache.tiles.size <= maxTiles) {
+    return;
+  }
+
+  const prunableTiles = [...cache.tiles.values()]
+    .filter((tile) => !visibleKeys.has(tile.key))
+    .sort((a, b) => a.lastUsed - b.lastUsed);
+  const removeCount = Math.min(cache.tiles.size - maxTiles, prunableTiles.length);
+
+  for (let i = 0; i < removeCount; i += 1) {
+    cache.tiles.delete(prunableTiles[i].key);
+  }
 }
 
 function normalizeStaticLayerBounds(bounds) {
@@ -609,19 +708,8 @@ function normalizeStaticLayerBounds(bounds) {
   };
 }
 
-function isStaticLayerCacheValid(cache, track, visibleBounds) {
-  return cache
-    && cache.trackId === track.id
-    && cache.worldWidth === WORLD.width
-    && cache.worldHeight === WORLD.height
-    && cache.bounds.minX <= visibleBounds.minX
-    && cache.bounds.maxX >= visibleBounds.maxX
-    && cache.bounds.minY <= visibleBounds.minY
-    && cache.bounds.maxY >= visibleBounds.maxY;
-}
-
 function invalidateStaticLayerCache() {
-  staticLayerCache = null;
+  staticLayerTileCache = null;
 }
 
 function drawWorld(renderState = getRenderState(), targetCtx = ctx, visibleBounds = getVisibleWorldBounds()) {
@@ -637,7 +725,9 @@ function drawWorld(renderState = getRenderState(), targetCtx = ctx, visibleBound
   targetCtx.strokeStyle = "rgba(238, 243, 236, 0.04)";
   targetCtx.lineWidth = 1;
   targetCtx.beginPath();
-  for (let x = visibleBounds.minX; x <= visibleBounds.maxX; x += 100) {
+  const gridMinX = Math.max(0, Math.floor(visibleBounds.minX / 100) * 100);
+  const gridMaxX = Math.min(WORLD.width, Math.ceil(visibleBounds.maxX / 100) * 100);
+  for (let x = gridMinX; x <= gridMaxX; x += 100) {
     targetCtx.moveTo(x, 0);
     targetCtx.lineTo(x, WORLD.height);
   }
