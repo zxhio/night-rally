@@ -11,6 +11,10 @@
 ```txt
 menu          页面加载前的初始状态
 track_select 赛道选择状态，允许上下切换赛道和确认
+track_action 已选赛道后的竞速动作状态：开始、挑战记录、导入导出记录
+record_select 当前赛道的记录挑战状态，只列带本地回放的可挑战记录
+record_tools 当前赛道的本地记录查看、导入和导出状态
+settings      车手档案和默认详细数据设置状态
 countdown     已确认赛道，等待第一次给油起跑
 racing        比赛计时中
 finish_coast  完赛后的短暂滑行
@@ -27,7 +31,13 @@ menu
   -> track_select    数据加载完成
 
 track_select
-  -> countdown       确认赛道
+  -> track_action    确认赛道
+
+track_action
+  -> countdown       选择开始
+  -> record_select   选择挑战记录
+  -> record_tools    选择导入导出记录
+  -> track_select    按 Esc / Backspace 返回赛道
 
 countdown
   -> racing          第一次给油
@@ -49,7 +59,7 @@ replay
   -> track_select    按 R 重置并返回选择
 ```
 
-`isSessionStarted()` 在 `racing / finish_coast / result / replay` 返回 true，用于阻止比赛中或回放中切换赛道。`track_select` 和 `countdown` 仍允许选择或重新确认赛道。
+`isSessionStarted()` 在 `racing / finish_coast / result / replay` 返回 true，用于阻止比赛中或回放中切换赛道。`menu / track_select / track_action / record_select / record_tools / settings / countdown` 仍允许菜单导航或重新确认赛道。
 
 ## 完赛规则
 
@@ -102,6 +112,7 @@ trackName
 timeS
 player.name
 player.color
+player.playerId
 rank
 total
 isBest
@@ -111,7 +122,7 @@ isBest
 
 - `Enter` / `Space`：重开当前赛道。
 - `R`：复位并返回赛道选择。
-- 结果面板上的 `Retry`、`Replay` 和 `Tracks` 按钮提供重开、回放和返回选择入口。
+- 结果面板上的 `再来一次`、`回放` 和 `换赛道` 按钮提供重开、回放和返回选择入口。
 
 ## 回放记录
 
@@ -133,6 +144,7 @@ trackName
 timeS
 player.name
 player.color
+player.playerId
 createdAt
 inputs[].tick
 inputs[].throttle
@@ -162,7 +174,7 @@ keyframes[].lapProgress
 
 ## Ghost 车
 
-比赛中会读取当前赛道最快有效成绩的 `replayRef`。如果能找到对应本地回放记录，则按当前比赛时间采样关键帧，绘制一个半透明 Ghost 车。旧成绩里的 `replayId` 会在读取时兼容转换成 `replayRef`。
+比赛中最多显示一个 Ghost。Ghost 只来自竞速模式中 `挑战记录` 手动选择的一条当前地图本地记录；`开始`、练习模式和没有选择记录的比赛不会显示 Ghost。旧成绩里的 `replayId` 会在读取时兼容转换成 `replayRef`。
 
 规则：
 
@@ -181,6 +193,7 @@ trackName
 carId
 player.name
 player.color
+player.playerId
 timeS
 distanceM
 valid
@@ -196,7 +209,7 @@ version         当前为 2
 trackId         赛道 id
 trackName       记录时的赛道显示名
 carId           车辆 id，当前 baseline 车辆为 baseline
-player          本地玩家档案快照，包含 name 和 color
+player          本地玩家档案快照，包含 playerId、name 和 color
 timeS           完赛时间, s
 distanceM       计时距离，环形赛道为单圈长度，直线为 finishDistanceM
 valid           当前只保存 true；以后可用于无效成绩留痕
@@ -227,7 +240,7 @@ createdAt       ISO 时间
 
 ## 本地记录文件
 
-排行榜面板提供 `Export` / `Import`。运行时仍使用浏览器存储；JSON 文件只作为手动备份、迁移和后续本地文件能力的合同。
+记录面板提供 `导出` / `导入`。运行时仍使用浏览器存储；JSON 文件只作为手动备份、迁移和后续本地文件能力的合同。
 
 导出文件名：
 
