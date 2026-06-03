@@ -1337,6 +1337,14 @@ function correctLapReverse(track) {
 }
 
 function updateCamera(dt) {
+  const target = getCameraTarget();
+
+  camera.zoom += (target.zoom - camera.zoom) * Math.min(1, dt * 2);
+  camera.x += (target.x - camera.x) * Math.min(1, dt * 4);
+  camera.y += (target.y - camera.y) * Math.min(1, dt * 4);
+}
+
+function getCameraTarget() {
   const minZoom = isCircuitTrack() ? 0.48 : 0.7;
   const maxZoom = isCircuitTrack() ? 0.78 : 1;
   const baseZoom = clamp(Math.min(view.width / 1040, view.height / 560), minZoom, maxZoom);
@@ -1348,9 +1356,11 @@ function updateCamera(dt) {
   const targetX = clamp(unclampedTargetX, halfViewW, WORLD.width - halfViewW);
   const targetY = clamp(unclampedTargetY, halfViewH, WORLD.height - halfViewH);
 
-  camera.zoom += (baseZoom - camera.zoom) * Math.min(1, dt * 2);
-  camera.x += (targetX - camera.x) * Math.min(1, dt * 4);
-  camera.y += (targetY - camera.y) * Math.min(1, dt * 4);
+  return {
+    x: targetX,
+    y: targetY,
+    zoom: baseZoom,
+  };
 }
 
 function updateHud(dt = HUD_UPDATE_INTERVAL_S, force = false) {
@@ -2168,7 +2178,7 @@ function renderTrackSelector() {
   const compact = !isMenuOverlayMode();
   trackPanel.classList.toggle("is-compact", compact);
   trackPanel.classList.toggle("is-start", !compact);
-  trackPanel.classList.toggle("is-menu", gameState === GAME_STATE.menu);
+  trackPanel.classList.toggle("is-menu", gameState === GAME_STATE.menu || gameState === GAME_STATE.trackSelect);
   trackPanel.replaceChildren();
 
   if (gameState === GAME_STATE.menu) {
@@ -2267,7 +2277,7 @@ function createRaceTrackPanel() {
   const trackList = document.createElement("div");
   trackList.className = "start-track-list";
   TRACK_LIST.forEach((candidate) => {
-    trackList.append(createTrackCard(candidate, false, () => openTrackAction(candidate.id)));
+    trackList.append(createTrackCard(candidate, false, () => openTrackAction(candidate.id), "is-race-pick"));
   });
 
   const controls = document.createElement("span");
@@ -2446,13 +2456,31 @@ function createSettingsPanel() {
 
   const display = document.createElement("button");
   display.type = "button";
-  display.className = "settings-toggle";
+  display.className = "settings-switch";
   display.classList.toggle("is-selected", selectedSettingsIndex === SETTINGS_ITEM.display);
-  display.textContent = displaySettings.advancedHudVisible ? "开启" : "关闭";
+  display.classList.toggle("is-on", displaySettings.advancedHudVisible);
+  display.setAttribute("role", "switch");
+  display.setAttribute("aria-checked", String(displaySettings.advancedHudVisible));
+  display.setAttribute("aria-label", "默认显示详细数据");
+
+  const displayTrack = document.createElement("span");
+  displayTrack.className = "settings-switch-track";
+
+  const displayThumb = document.createElement("span");
+  displayThumb.className = "settings-switch-thumb";
+  displayTrack.append(displayThumb);
+
   display.addEventListener("click", () => {
+    if (display.dataset.dragged === "true") {
+      display.dataset.dragged = "false";
+      return;
+    }
+
     selectedSettingsIndex = SETTINGS_ITEM.display;
     toggleDefaultDetailedHud();
   });
+  attachSettingsSwitchDrag(display);
+  display.append(displayTrack);
   displayRow.append(displayTitle, display);
 
   const controls = document.createElement("span");
@@ -2523,10 +2551,10 @@ function createStartPanel(track) {
   return panel;
 }
 
-function createTrackCard(track, disabled, onSelect = confirmTrackSelection) {
+function createTrackCard(track, disabled, onSelect = confirmTrackSelection, variant = "") {
   const button = document.createElement("button");
   button.type = "button";
-  button.className = "track-card";
+  button.className = variant ? `track-card ${variant}` : "track-card";
   button.dataset.track = track.id;
   button.disabled = disabled;
   button.classList.toggle("is-active", track.id === activeTrackId);
@@ -2536,8 +2564,8 @@ function createTrackCard(track, disabled, onSelect = confirmTrackSelection) {
   const thumb = document.createElement("canvas");
   thumb.className = "track-thumb";
   thumb.dataset.track = track.id;
-  thumb.width = 184;
-  thumb.height = 110;
+  thumb.width = variant === "is-race-pick" ? 256 : 184;
+  thumb.height = variant === "is-race-pick" ? 152 : 110;
   drawTrackThumbnail(thumb, track);
 
   const meta = document.createElement("span");
@@ -2837,7 +2865,7 @@ function updateControlHint() {
     return;
   }
 
-  const message = gameState === GAME_STATE.countdown ? "W / ↑ 加速" : "";
+  const message = gameState === GAME_STATE.countdown ? "W / ↑ 加速 · A/D / ←→ 转向" : "";
   controlHintEl.hidden = message.length === 0;
   controlHintEl.textContent = message;
 }
@@ -3324,6 +3352,86 @@ function activateSettingsSelection() {
   }
 }
 
+function attachSettingsSwitchDrag(switchEl) {
+  const track = switchEl.querySelector(".settings-switch-track");
+  const thumb = switchEl.querySelector(".settings-switch-thumb");
+
+  if (!track || !thumb) {
+    return;
+  }
+
+  let pointerId = null;
+  let startX = 0;
+  let moved = false;
+  let dragProgress = displaySettings.advancedHudVisible ? 1 : 0;
+
+  const updateThumbPosition = (clientX) => {
+    const trackRect = track.getBoundingClientRect();
+    const thumbRect = thumb.getBoundingClientRect();
+    const padding = 4;
+    const travel = Math.max(1, trackRect.width - thumbRect.width - padding * 2);
+    const x = clientX - trackRect.left - padding - thumbRect.width / 2;
+    const progress = clamp(x / travel, 0, 1);
+
+    thumb.style.transform = `translateX(${progress * travel}px)`;
+    return progress;
+  };
+
+  const finishDrag = (event) => {
+    if (pointerId !== event.pointerId) {
+      return;
+    }
+
+    switchEl.releasePointerCapture?.(event.pointerId);
+    switchEl.classList.remove("is-dragging");
+
+    if (moved) {
+      setDefaultDetailedHud(dragProgress >= 0.5);
+    } else {
+      thumb.style.transform = "";
+    }
+
+    pointerId = null;
+  };
+
+  switchEl.addEventListener("pointerdown", (event) => {
+    pointerId = event.pointerId;
+    startX = event.clientX;
+    moved = false;
+    switchEl.dataset.dragged = "false";
+    switchEl.classList.add("is-dragging");
+    switchEl.setPointerCapture?.(event.pointerId);
+  });
+
+  switchEl.addEventListener("pointermove", (event) => {
+    if (pointerId !== event.pointerId) {
+      return;
+    }
+
+    if (Math.abs(event.clientX - startX) > 3) {
+      moved = true;
+      switchEl.dataset.dragged = "true";
+    }
+
+    if (moved) {
+      event.preventDefault();
+      dragProgress = updateThumbPosition(event.clientX);
+    }
+  });
+
+  switchEl.addEventListener("pointerup", finishDrag);
+  switchEl.addEventListener("pointercancel", (event) => {
+    if (pointerId !== event.pointerId) {
+      return;
+    }
+
+    switchEl.releasePointerCapture?.(event.pointerId);
+    switchEl.classList.remove("is-dragging");
+    thumb.style.transform = "";
+    pointerId = null;
+  });
+}
+
 function drawTrackThumbnail(canvasEl, track) {
   const thumbCtx = canvasEl.getContext("2d");
   const width = canvasEl.width;
@@ -3522,8 +3630,10 @@ function resetCar() {
   currentSurface = getSurfaceAt(car.x, car.y);
   previousSurface = currentSurface;
   resetLapMode();
-  camera.x = car.x;
-  camera.y = car.y;
+  const cameraTarget = getCameraTarget();
+  camera.x = cameraTarget.x;
+  camera.y = cameraTarget.y;
+  camera.zoom = cameraTarget.zoom;
   updateHud(HUD_UPDATE_INTERVAL_S, true);
   draw();
 }
@@ -4034,9 +4144,17 @@ function toggleAdvancedHud() {
 }
 
 function toggleDefaultDetailedHud() {
-  const nextVisible = !displaySettings.advancedHudVisible;
-  saveDisplaySettings({ advancedHudVisible: nextVisible });
-  advancedHudVisible = nextVisible;
+  setDefaultDetailedHud(!displaySettings.advancedHudVisible);
+}
+
+function setDefaultDetailedHud(nextVisible) {
+  const normalizedVisible = nextVisible === true;
+
+  if (displaySettings.advancedHudVisible !== normalizedVisible) {
+    saveDisplaySettings({ advancedHudVisible: normalizedVisible });
+  }
+
+  advancedHudVisible = normalizedVisible;
   applyAdvancedHudVisibility();
   updateTrackSelector(true);
 }

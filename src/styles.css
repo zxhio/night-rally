@@ -178,20 +178,73 @@ body {
   gap: 10px;
 }
 
-.settings-toggle {
-  min-width: 64px;
-  min-height: 34px;
-  border: 1px solid rgba(238, 243, 236, 0.18);
+.settings-switch {
+  position: relative;
+  width: 62px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid rgba(238, 243, 236, 0.16);
   border-radius: 5px;
-  background: rgba(238, 243, 236, 0.06);
-  color: rgba(238, 243, 236, 0.82);
-  font: inherit;
-  font-size: 12px;
-  font-weight: 900;
+  background: rgba(9, 12, 11, 0.84);
   cursor: pointer;
+  touch-action: none;
 }
 
-.settings-toggle.is-selected,
+.settings-switch-track {
+  position: absolute;
+  inset: 3px;
+  display: block;
+  border-radius: 4px;
+  background: rgba(238, 243, 236, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(238, 243, 236, 0.08);
+  transition: background 140ms ease, box-shadow 140ms ease;
+}
+
+.settings-switch-thumb {
+  position: absolute;
+  left: 4px;
+  top: 4px;
+  display: block;
+  width: 22px;
+  height: 18px;
+  border-radius: 3px;
+  background: rgba(238, 243, 236, 0.58);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.34);
+  transition: transform 140ms ease, background 140ms ease;
+}
+
+.settings-switch-thumb::before {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 10px;
+  height: 2px;
+  border-radius: 2px;
+  background: rgba(9, 12, 11, 0.58);
+  content: "";
+  transform: translate(-50%, -50%);
+}
+
+.settings-switch.is-on {
+  border-color: rgba(189, 247, 221, 0.5);
+  background: rgba(21, 48, 38, 0.84);
+}
+
+.settings-switch.is-on .settings-switch-track {
+  background: rgba(98, 206, 145, 0.3);
+  box-shadow: inset 0 0 0 1px rgba(189, 247, 221, 0.26);
+}
+
+.settings-switch.is-on .settings-switch-thumb {
+  background: #d4f8de;
+  transform: translateX(26px);
+}
+
+.settings-switch.is-dragging .settings-switch-thumb {
+  transition: none;
+}
+
+.settings-switch.is-selected,
 .player-name-input.is-selected {
   border-color: rgba(238, 243, 236, 0.72);
   box-shadow: inset 0 0 0 1px rgba(238, 243, 236, 0.42);
@@ -435,6 +488,34 @@ body {
   aspect-ratio: 5 / 3;
   border-radius: 3px;
   background: #b78345;
+}
+
+.race-track-panel .track-card.is-race-pick {
+  grid-template-columns: 128px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 88px;
+  padding: 6px;
+}
+
+.race-track-panel .track-card.is-race-pick .track-thumb {
+  width: 128px;
+  height: 76px;
+  aspect-ratio: auto;
+}
+
+.race-track-panel .track-card.is-race-pick .track-meta {
+  display: grid;
+  gap: 5px;
+  justify-content: normal;
+}
+
+.race-track-panel .track-card.is-race-pick .track-name {
+  font-size: 13px;
+}
+
+.race-track-panel .track-card.is-race-pick .track-length {
+  font-size: 10px;
 }
 
 .track-meta {
