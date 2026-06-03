@@ -163,6 +163,10 @@ const MAIN_MENU_ITEMS = [
     detail: "车手档案和详细数据",
   },
 ];
+const RUN_MODE = {
+  practice: "practice",
+  race: "race",
+};
 const RESULT_ACTION_IDS = ["retry", "replay", "trackSelect"];
 const RACE_PAUSE_ACTION_ITEMS = [
   {
@@ -246,6 +250,7 @@ let selectedRecordIndex = 0;
 let selectedResultActionIndex = 0;
 let selectedRacePauseActionIndex = 0;
 let selectedGhostReplayId = null;
+let activeRunMode = RUN_MODE.race;
 let racePauseResumeState = GAME_STATE.countdown;
 let leaderboardState = "";
 let localRecordsStatus = "";
@@ -2866,7 +2871,7 @@ function updateResultPanel() {
   }
 
   resultPanel.hidden = gameState !== GAME_STATE.result || !lastFinishResult;
-  resultPanel.classList.toggle("has-esc-badge", !resultPanel.hidden);
+  resultPanel.classList.remove("has-esc-badge");
   if (resultPanel.hidden) {
     resultPanel.replaceChildren();
     return;
@@ -2898,11 +2903,8 @@ function updateResultPanel() {
   playerName.textContent = lastFinishResult.player.name;
 
   player.append(swatch, playerName);
-  const hint = document.createElement("span");
-  hint.className = "result-hint";
-  hint.textContent = "←→ 选择 · Enter 确认 · Esc 赛道选择";
 
-  summary.append(trackName, time, rank, player, hint);
+  summary.append(trackName, time, rank, player);
 
   const actions = document.createElement("div");
   actions.className = "result-actions";
@@ -2929,7 +2931,7 @@ function updateResultPanel() {
     actions.append(button);
   });
 
-  resultPanel.replaceChildren(createEscBadge("ESC"), summary, actions);
+  resultPanel.replaceChildren(summary, actions);
 }
 
 function createEscBadge(label = "ESC") {
@@ -2967,7 +2969,7 @@ function getResultActionItems() {
 
     return {
       id,
-      title: "赛道选择",
+      title: getRunExitTitle(),
       disabled: false,
     };
   });
@@ -3002,8 +3004,7 @@ function getNextEnabledActionIndex(index, direction, items) {
 
 function handleResultKey(event) {
   if (event.code === "Escape" || event.code === "Backspace") {
-    resetCar();
-    openTrackSelection(activeTrackId);
+    exitCurrentRun();
     return true;
   }
 
@@ -3057,9 +3058,26 @@ function activateResultAction(actionId) {
   }
 
   if (actionId === "trackSelect") {
-    resetCar();
-    openTrackSelection(activeTrackId);
+    exitCurrentRun();
   }
+}
+
+function getRunExitTitle() {
+  return activeRunMode === RUN_MODE.practice ? "退出" : "赛道选择";
+}
+
+function getRunExitDetail() {
+  return activeRunMode === RUN_MODE.practice ? "退出练习并返回主菜单" : "退出本次尝试并选择赛道";
+}
+
+function exitCurrentRun() {
+  resetCar();
+  if (activeRunMode === RUN_MODE.practice) {
+    openMainMenu();
+    return;
+  }
+
+  openTrackSelection(activeTrackId);
 }
 
 function isRacePauseAvailable() {
@@ -3114,7 +3132,9 @@ function renderRacePausePanel() {
   const actions = document.createElement("div");
   actions.className = "race-pause-actions";
 
-  RACE_PAUSE_ACTION_ITEMS.forEach((item, index) => {
+  const actionItems = getRacePauseActionItems();
+
+  actionItems.forEach((item, index) => {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "race-pause-action";
@@ -3170,7 +3190,7 @@ function handleRacePauseKey(event) {
   }
 
   if (event.code === "Enter" || event.code === "Space") {
-    const item = RACE_PAUSE_ACTION_ITEMS[selectedRacePauseActionIndex];
+    const item = getRacePauseActionItems()[selectedRacePauseActionIndex];
     if (item) {
       activateRacePauseAction(item.id);
     }
@@ -3181,7 +3201,7 @@ function handleRacePauseKey(event) {
 }
 
 function moveRacePauseSelection(direction) {
-  selectedRacePauseActionIndex = wrapIndex(selectedRacePauseActionIndex + direction, RACE_PAUSE_ACTION_ITEMS.length);
+  selectedRacePauseActionIndex = wrapIndex(selectedRacePauseActionIndex + direction, getRacePauseActionItems().length);
   renderRacePausePanel();
 }
 
@@ -3197,9 +3217,22 @@ function activateRacePauseAction(actionId) {
   }
 
   if (actionId === "trackSelect") {
-    resetCar();
-    openTrackSelection(activeTrackId);
+    exitCurrentRun();
   }
+}
+
+function getRacePauseActionItems() {
+  return RACE_PAUSE_ACTION_ITEMS.map((item) => {
+    if (item.id !== "trackSelect") {
+      return item;
+    }
+
+    return {
+      ...item,
+      title: getRunExitTitle(),
+      detail: getRunExitDetail(),
+    };
+  });
 }
 
 function formatResultRank(result) {
@@ -3396,20 +3429,21 @@ function activateMainMenuItem() {
 
 function startPracticeMode() {
   const practiceTrackId = defaultTrackId ?? activeTrackId;
-  startTimedRun(practiceTrackId, null);
+  startTimedRun(practiceTrackId, null, RUN_MODE.practice);
 }
 
 function confirmTrackSelection(trackId = selectedTrackId) {
-  startTimedRun(trackId, null);
+  startTimedRun(trackId, null, RUN_MODE.race);
 }
 
-function startTimedRun(trackId = selectedTrackId, ghostReplayId = null) {
+function startTimedRun(trackId = selectedTrackId, ghostReplayId = null, runMode = RUN_MODE.race) {
   if (!TRACKS[trackId] || isSessionStarted()) {
     return;
   }
 
   keys.clear();
   applyDefaultDetailedHud();
+  activeRunMode = runMode;
   activeTrackId = trackId;
   selectedTrackId = trackId;
   selectedGhostReplayId = ghostReplayId;
@@ -3507,7 +3541,7 @@ function activateTrackAction() {
   const item = TRACK_ACTION_ITEMS[selectedTrackActionIndex];
 
   if (item?.id === "start") {
-    startTimedRun(selectedTrackId, null);
+    startTimedRun(selectedTrackId, null, RUN_MODE.race);
     return;
   }
 
@@ -3599,7 +3633,7 @@ function confirmRecordSelection() {
     return;
   }
 
-  startTimedRun(selectedTrackId, option.replayId);
+  startTimedRun(selectedTrackId, option.replayId, RUN_MODE.race);
 }
 
 function getRecordSelectionOptions(trackId) {
