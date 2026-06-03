@@ -54,6 +54,8 @@ const BRAKE_TRAIL_INTENSITY = 0.3;
 const TURN_RADIUS_MAX_M = 999;
 const HUD_UPDATE_INTERVAL_S = 0.1;
 const THUMBNAIL_UPDATE_INTERVAL_S = 0.12;
+const STATIC_LAYER_CACHE_MARGIN = 900;
+const STATIC_LAYER_CACHE_MAX_PIXELS = 28000000;
 const LAP_STATE = {
   ready: "ready",
   running: "running",
@@ -284,6 +286,7 @@ let hudUpdateAccumulator = HUD_UPDATE_INTERVAL_S;
 let thumbnailUpdateAccumulator = THUMBNAIL_UPDATE_INTERVAL_S;
 let advancedHudVisible = displaySettings.advancedHudVisible;
 const skidMarks = [];
+let staticLayerCache = null;
 
 applyAdvancedHudVisibility();
 
@@ -522,8 +525,7 @@ function draw(renderState = getRenderState()) {
   ctx.scale(renderState.camera.zoom, renderState.camera.zoom);
   ctx.translate(-renderState.camera.x, -renderState.camera.y);
 
-  drawWorld(renderState);
-  drawTrack(renderState);
+  drawStaticLayer(renderState);
   drawSkidMarks();
   drawGhostCar();
   drawCarShadow();
@@ -532,44 +534,133 @@ function draw(renderState = getRenderState()) {
   ctx.restore();
 }
 
-function drawWorld(renderState = getRenderState()) {
-  const track = renderState.track;
-  const visibleBounds = getVisibleWorldBounds();
-
-  ctx.fillStyle = track.background ?? "#b78345";
-  ctx.fillRect(0, 0, WORLD.width, WORLD.height);
-
-  if (track.type === "circuit") {
-    drawDirtTexture(track, visibleBounds);
+function drawStaticLayer(renderState = getRenderState()) {
+  const cache = getStaticLayerCache(renderState);
+  if (cache) {
+    ctx.drawImage(cache.canvas, cache.x, cache.y);
+    return;
   }
 
-  ctx.strokeStyle = "rgba(238, 243, 236, 0.04)";
-  ctx.lineWidth = 1;
-  for (let x = visibleBounds.minX; x <= visibleBounds.maxX; x += 100) {
-    ctx.beginPath();
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, WORLD.height);
-    ctx.stroke();
-  }
-
-  ctx.strokeStyle = track.type === "circuit" ? "rgba(54, 41, 28, 0.42)" : "#111514";
-  ctx.lineWidth = 24;
-  ctx.strokeRect(12, 12, WORLD.width - 24, WORLD.height - 24);
+  drawWorld(renderState);
+  drawTrack(renderState);
 }
 
-function getVisibleWorldBounds(padding = 160) {
-  const halfWidth = view.width / 2 / camera.zoom;
-  const halfHeight = view.height / 2 / camera.zoom;
+function getStaticLayerCache(renderState) {
+  const track = renderState.track;
+  const visibleBounds = normalizeStaticLayerBounds(
+    getVisibleWorldBounds(0, renderState.camera, renderState.view),
+  );
+
+  if (isStaticLayerCacheValid(staticLayerCache, track, visibleBounds)) {
+    return staticLayerCache;
+  }
+
+  const cacheBounds = normalizeStaticLayerBounds(
+    getVisibleWorldBounds(STATIC_LAYER_CACHE_MARGIN, renderState.camera, renderState.view),
+  );
+  const width = Math.max(1, cacheBounds.maxX - cacheBounds.minX);
+  const height = Math.max(1, cacheBounds.maxY - cacheBounds.minY);
+
+  if (width * height > STATIC_LAYER_CACHE_MAX_PIXELS) {
+    staticLayerCache = null;
+    return null;
+  }
+
+  const nextCache = createStaticLayerCache(renderState, cacheBounds, width, height);
+  staticLayerCache = nextCache;
+  return staticLayerCache;
+}
+
+function createStaticLayerCache(renderState, bounds, width, height) {
+  const cacheCanvas = document.createElement("canvas");
+  cacheCanvas.width = width;
+  cacheCanvas.height = height;
+  const cacheCtx = cacheCanvas.getContext("2d");
+
+  if (!cacheCtx) {
+    return null;
+  }
+
+  cacheCtx.save();
+  cacheCtx.translate(-bounds.minX, -bounds.minY);
+  drawWorld(renderState, cacheCtx, bounds);
+  drawTrack(renderState, cacheCtx);
+  cacheCtx.restore();
 
   return {
-    minX: Math.max(0, Math.floor((camera.x - halfWidth - padding) / 100) * 100),
-    maxX: Math.min(WORLD.width, Math.ceil((camera.x + halfWidth + padding) / 100) * 100),
-    minY: Math.max(0, camera.y - halfHeight - padding),
-    maxY: Math.min(WORLD.height, camera.y + halfHeight + padding),
+    canvas: cacheCanvas,
+    trackId: renderState.track.id,
+    worldWidth: WORLD.width,
+    worldHeight: WORLD.height,
+    x: bounds.minX,
+    y: bounds.minY,
+    width,
+    height,
+    bounds,
   };
 }
 
-function drawDirtTexture(track, visibleBounds) {
+function normalizeStaticLayerBounds(bounds) {
+  return {
+    minX: Math.max(0, Math.floor(bounds.minX)),
+    maxX: Math.min(WORLD.width, Math.ceil(bounds.maxX)),
+    minY: Math.max(0, Math.floor(bounds.minY)),
+    maxY: Math.min(WORLD.height, Math.ceil(bounds.maxY)),
+  };
+}
+
+function isStaticLayerCacheValid(cache, track, visibleBounds) {
+  return cache
+    && cache.trackId === track.id
+    && cache.worldWidth === WORLD.width
+    && cache.worldHeight === WORLD.height
+    && cache.bounds.minX <= visibleBounds.minX
+    && cache.bounds.maxX >= visibleBounds.maxX
+    && cache.bounds.minY <= visibleBounds.minY
+    && cache.bounds.maxY >= visibleBounds.maxY;
+}
+
+function invalidateStaticLayerCache() {
+  staticLayerCache = null;
+}
+
+function drawWorld(renderState = getRenderState(), targetCtx = ctx, visibleBounds = getVisibleWorldBounds()) {
+  const track = renderState.track;
+
+  targetCtx.fillStyle = track.background ?? "#b78345";
+  targetCtx.fillRect(0, 0, WORLD.width, WORLD.height);
+
+  if (track.type === "circuit") {
+    drawDirtTexture(track, visibleBounds, targetCtx);
+  }
+
+  targetCtx.strokeStyle = "rgba(238, 243, 236, 0.04)";
+  targetCtx.lineWidth = 1;
+  targetCtx.beginPath();
+  for (let x = visibleBounds.minX; x <= visibleBounds.maxX; x += 100) {
+    targetCtx.moveTo(x, 0);
+    targetCtx.lineTo(x, WORLD.height);
+  }
+  targetCtx.stroke();
+
+  targetCtx.strokeStyle = track.type === "circuit" ? "rgba(54, 41, 28, 0.42)" : "#111514";
+  targetCtx.lineWidth = 24;
+  targetCtx.strokeRect(12, 12, WORLD.width - 24, WORLD.height - 24);
+}
+
+function getVisibleWorldBounds(padding = 160, cameraState = camera, viewState = view) {
+  const halfWidth = viewState.width / 2 / cameraState.zoom;
+  const halfHeight = viewState.height / 2 / cameraState.zoom;
+
+  return {
+    minX: Math.max(0, Math.floor((cameraState.x - halfWidth - padding) / 100) * 100),
+    maxX: Math.min(WORLD.width, Math.ceil((cameraState.x + halfWidth + padding) / 100) * 100),
+    minY: Math.max(0, cameraState.y - halfHeight - padding),
+    maxY: Math.min(WORLD.height, cameraState.y + halfHeight + padding),
+  };
+}
+
+function drawDirtTexture(track, visibleBounds, targetCtx = ctx) {
   for (const speck of track.dirtSpecks) {
     if (
       speck.x < visibleBounds.minX
@@ -580,119 +671,119 @@ function drawDirtTexture(track, visibleBounds) {
       continue;
     }
 
-    ctx.fillStyle = `rgba(91, 59, 29, ${speck.a * 0.72})`;
-    ctx.beginPath();
-    ctx.arc(speck.x, speck.y, speck.r, 0, Math.PI * 2);
-    ctx.fill();
+    targetCtx.fillStyle = `rgba(91, 59, 29, ${speck.a * 0.72})`;
+    targetCtx.beginPath();
+    targetCtx.arc(speck.x, speck.y, speck.r, 0, Math.PI * 2);
+    targetCtx.fill();
   }
 }
 
-function drawTrack(renderState = getRenderState()) {
+function drawTrack(renderState = getRenderState(), targetCtx = ctx) {
   const track = renderState.track;
   if (track.type === "circuit") {
-    drawCircuit(track);
+    drawCircuit(track, targetCtx);
     return;
   }
 
-  drawRunway(track);
+  drawRunway(track, targetCtx);
 }
 
-function drawRunway(track) {
+function drawRunway(track, targetCtx = ctx) {
   const y = WORLD.runwayY - WORLD.runwayWidth / 2;
 
-  ctx.fillStyle = "#171c1c";
-  roundRect(WORLD.margin, y - 28, WORLD.width - WORLD.margin * 2, WORLD.runwayWidth + 56, 18);
-  ctx.fill();
+  targetCtx.fillStyle = "#171c1c";
+  roundRect(WORLD.margin, y - 28, WORLD.width - WORLD.margin * 2, WORLD.runwayWidth + 56, 18, targetCtx);
+  targetCtx.fill();
 
-  ctx.fillStyle = "#343a38";
-  roundRect(WORLD.margin + 18, y, WORLD.width - (WORLD.margin + 18) * 2, WORLD.runwayWidth, 12);
-  ctx.fill();
+  targetCtx.fillStyle = "#343a38";
+  roundRect(WORLD.margin + 18, y, WORLD.width - (WORLD.margin + 18) * 2, WORLD.runwayWidth, 12, targetCtx);
+  targetCtx.fill();
 
-  ctx.strokeStyle = "rgba(238, 243, 236, 0.18)";
-  ctx.lineWidth = ROAD_MARKING.widthM * PX_PER_METER;
-  ctx.setLineDash([ROAD_MARKING.dashM * PX_PER_METER, ROAD_MARKING.gapM * PX_PER_METER]);
-  ctx.beginPath();
-  ctx.moveTo(WORLD.margin + 80, WORLD.runwayY);
-  ctx.lineTo(WORLD.width - WORLD.margin - 80, WORLD.runwayY);
-  ctx.stroke();
-  ctx.setLineDash([]);
+  targetCtx.strokeStyle = "rgba(238, 243, 236, 0.18)";
+  targetCtx.lineWidth = ROAD_MARKING.widthM * PX_PER_METER;
+  targetCtx.setLineDash([ROAD_MARKING.dashM * PX_PER_METER, ROAD_MARKING.gapM * PX_PER_METER]);
+  targetCtx.beginPath();
+  targetCtx.moveTo(WORLD.margin + 80, WORLD.runwayY);
+  targetCtx.lineTo(WORLD.width - WORLD.margin - 80, WORLD.runwayY);
+  targetCtx.stroke();
+  targetCtx.setLineDash([]);
 
-  ctx.strokeStyle = "rgba(238, 243, 236, 0.24)";
-  ctx.lineWidth = ROAD_MARKING.widthM * PX_PER_METER;
-  ctx.beginPath();
-  ctx.moveTo(WORLD.margin + 18, y + ROAD_MARKING.edgeOffsetM * PX_PER_METER);
-  ctx.lineTo(WORLD.width - WORLD.margin - 18, y + ROAD_MARKING.edgeOffsetM * PX_PER_METER);
-  ctx.moveTo(WORLD.margin + 18, y + WORLD.runwayWidth - ROAD_MARKING.edgeOffsetM * PX_PER_METER);
-  ctx.lineTo(WORLD.width - WORLD.margin - 18, y + WORLD.runwayWidth - ROAD_MARKING.edgeOffsetM * PX_PER_METER);
-  ctx.stroke();
+  targetCtx.strokeStyle = "rgba(238, 243, 236, 0.24)";
+  targetCtx.lineWidth = ROAD_MARKING.widthM * PX_PER_METER;
+  targetCtx.beginPath();
+  targetCtx.moveTo(WORLD.margin + 18, y + ROAD_MARKING.edgeOffsetM * PX_PER_METER);
+  targetCtx.lineTo(WORLD.width - WORLD.margin - 18, y + ROAD_MARKING.edgeOffsetM * PX_PER_METER);
+  targetCtx.moveTo(WORLD.margin + 18, y + WORLD.runwayWidth - ROAD_MARKING.edgeOffsetM * PX_PER_METER);
+  targetCtx.lineTo(WORLD.width - WORLD.margin - 18, y + WORLD.runwayWidth - ROAD_MARKING.edgeOffsetM * PX_PER_METER);
+  targetCtx.stroke();
 
-  drawStartMarker(track);
+  drawStartMarker(track, targetCtx);
 }
 
-function drawCircuit(track) {
+function drawCircuit(track, targetCtx = ctx) {
   const grassHalfWidth = track.roadHalfWidth + track.curbWidth + track.grassWidth;
   const curbHalfWidth = track.roadHalfWidth + track.curbWidth;
 
-  ctx.save();
-  ctx.lineJoin = "round";
-  ctx.lineCap = "round";
+  targetCtx.save();
+  targetCtx.lineJoin = "round";
+  targetCtx.lineCap = "round";
 
-  ctx.strokeStyle = "rgba(32, 46, 25, 0.54)";
-  ctx.lineWidth = grassHalfWidth * 2 + 4;
-  strokeCircuitPath(track.path);
-  ctx.stroke();
+  targetCtx.strokeStyle = "rgba(32, 46, 25, 0.54)";
+  targetCtx.lineWidth = grassHalfWidth * 2 + 4;
+  strokeCircuitPath(track.path, targetCtx);
+  targetCtx.stroke();
 
-  ctx.strokeStyle = TRACK_PALETTE.grassOuter;
-  ctx.lineWidth = grassHalfWidth * 2;
-  strokeCircuitPath(track.path);
-  ctx.stroke();
+  targetCtx.strokeStyle = TRACK_PALETTE.grassOuter;
+  targetCtx.lineWidth = grassHalfWidth * 2;
+  strokeCircuitPath(track.path, targetCtx);
+  targetCtx.stroke();
 
   if (track.curbWidth > 0) {
-    ctx.strokeStyle = TRACK_PALETTE.curbOuter;
-    ctx.lineWidth = curbHalfWidth * 2;
-    strokeCircuitPath(track.path);
-    ctx.stroke();
+    targetCtx.strokeStyle = TRACK_PALETTE.curbOuter;
+    targetCtx.lineWidth = curbHalfWidth * 2;
+    strokeCircuitPath(track.path, targetCtx);
+    targetCtx.stroke();
 
-    ctx.setLineDash([10, 10]);
-    ctx.strokeStyle = "rgba(196, 78, 67, 0.34)";
-    ctx.lineWidth = Math.max(1, curbHalfWidth * 2 - 6);
-    strokeCircuitPath(track.path);
-    ctx.stroke();
-    ctx.setLineDash([]);
+    targetCtx.setLineDash([10, 10]);
+    targetCtx.strokeStyle = "rgba(196, 78, 67, 0.34)";
+    targetCtx.lineWidth = Math.max(1, curbHalfWidth * 2 - 6);
+    strokeCircuitPath(track.path, targetCtx);
+    targetCtx.stroke();
+    targetCtx.setLineDash([]);
   }
 
-  ctx.strokeStyle = TRACK_PALETTE.road;
-  ctx.lineWidth = track.roadHalfWidth * 2;
-  strokeCircuitPath(track.path);
-  ctx.stroke();
+  targetCtx.strokeStyle = TRACK_PALETTE.road;
+  targetCtx.lineWidth = track.roadHalfWidth * 2;
+  strokeCircuitPath(track.path, targetCtx);
+  targetCtx.stroke();
 
-  ctx.strokeStyle = "rgba(238, 243, 236, 0.22)";
-  ctx.lineWidth = ROAD_MARKING.widthM * PX_PER_METER;
-  ctx.setLineDash([ROAD_MARKING.dashM * PX_PER_METER, ROAD_MARKING.gapM * PX_PER_METER]);
-  strokeCircuitPath(track.path);
-  ctx.stroke();
-  ctx.setLineDash([]);
+  targetCtx.strokeStyle = "rgba(238, 243, 236, 0.22)";
+  targetCtx.lineWidth = ROAD_MARKING.widthM * PX_PER_METER;
+  targetCtx.setLineDash([ROAD_MARKING.dashM * PX_PER_METER, ROAD_MARKING.gapM * PX_PER_METER]);
+  strokeCircuitPath(track.path, targetCtx);
+  targetCtx.stroke();
+  targetCtx.setLineDash([]);
 
-  ctx.restore();
+  targetCtx.restore();
 
-  drawCircuitStartMarker(track);
+  drawCircuitStartMarker(track, targetCtx);
 }
 
-function drawCircuitStartMarker(track) {
+function drawCircuitStartMarker(track, targetCtx = ctx) {
   const startAngle = getPathSegmentAngle(track.path, 0);
   const stripeCount = 8;
   const lineLength = track.roadHalfWidth * 2;
   const stripeWidth = lineLength / stripeCount;
   const stripeHeight = 2 * PX_PER_METER;
 
-  ctx.save();
-  ctx.translate(track.startX, track.startY);
-  ctx.rotate(startAngle + Math.PI / 2);
+  targetCtx.save();
+  targetCtx.translate(track.startX, track.startY);
+  targetCtx.rotate(startAngle + Math.PI / 2);
   for (let i = 0; i < stripeCount; i += 1) {
-    ctx.fillStyle = i % 2 === 0 ? "#f0efe5" : "#111514";
-    ctx.fillRect(-lineLength / 2 + i * stripeWidth, -stripeHeight / 2, stripeWidth, stripeHeight);
+    targetCtx.fillStyle = i % 2 === 0 ? "#f0efe5" : "#111514";
+    targetCtx.fillRect(-lineLength / 2 + i * stripeWidth, -stripeHeight / 2, stripeWidth, stripeHeight);
   }
-  ctx.restore();
+  targetCtx.restore();
 }
 
 function getPathSegmentAngle(points, index) {
@@ -775,40 +866,47 @@ function getTrackPoseAtProgress(track, progressM) {
   return { x, y, angle, progressPx };
 }
 
-function strokeCircuitPath(points) {
+function strokeCircuitPath(points, targetCtx = ctx) {
   const first = points[0];
-  ctx.beginPath();
-  ctx.moveTo(first[0], first[1]);
+  targetCtx.beginPath();
+  targetCtx.moveTo(first[0], first[1]);
 
   for (let i = 0; i < points.length; i += 1) {
     const current = points[i];
     const next = points[(i + 1) % points.length];
     const midX = (current[0] + next[0]) / 2;
     const midY = (current[1] + next[1]) / 2;
-    ctx.quadraticCurveTo(current[0], current[1], midX, midY);
+    targetCtx.quadraticCurveTo(current[0], current[1], midX, midY);
   }
 
-  ctx.closePath();
+  targetCtx.closePath();
 }
 
-function drawStartMarker(track) {
+function drawStartMarker(track, targetCtx = ctx) {
   const x = track.startX - 4 * PX_PER_METER;
   const y = WORLD.runwayY - WORLD.runwayWidth / 2;
   const stripeCount = 8;
   const stripeHeight = WORLD.runwayWidth / stripeCount;
   const stripeWidth = 2 * PX_PER_METER;
 
-  drawRunwayMarker(x, y, stripeWidth, stripeHeight, stripeCount);
+  drawRunwayMarker(x, y, stripeWidth, stripeHeight, stripeCount, targetCtx);
 
   if (Number.isFinite(track.finishDistanceM)) {
-    drawRunwayMarker(track.startX + track.finishDistanceM * PX_PER_METER, y, stripeWidth, stripeHeight, stripeCount);
+    drawRunwayMarker(
+      track.startX + track.finishDistanceM * PX_PER_METER,
+      y,
+      stripeWidth,
+      stripeHeight,
+      stripeCount,
+      targetCtx,
+    );
   }
 }
 
-function drawRunwayMarker(x, y, stripeWidth, stripeHeight, stripeCount) {
+function drawRunwayMarker(x, y, stripeWidth, stripeHeight, stripeCount, targetCtx = ctx) {
   for (let i = 0; i < stripeCount; i += 1) {
-    ctx.fillStyle = i % 2 === 0 ? "#f0efe5" : "#111514";
-    ctx.fillRect(x, y + i * stripeHeight, stripeWidth, stripeHeight);
+    targetCtx.fillStyle = i % 2 === 0 ? "#f0efe5" : "#111514";
+    targetCtx.fillRect(x, y + i * stripeHeight, stripeWidth, stripeHeight);
   }
 }
 
@@ -4066,6 +4164,7 @@ function resize() {
   canvas.style.width = `${width}px`;
   canvas.style.height = `${height}px`;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  invalidateStaticLayerCache();
 }
 
 async function loadJson(url) {
@@ -4165,6 +4264,7 @@ function applyTrackToWorld(track) {
   WORLD.height = track.height;
   WORLD.runwayY = track.startY;
   WORLD.runwayWidth = track.runwayWidth ?? 14 * PX_PER_METER;
+  invalidateStaticLayerCache();
 }
 
 function buildDirtSpecks(track) {
@@ -5031,13 +5131,19 @@ function drawEllipse(x, y, radiusX, radiusY) {
   ctx.ellipse(x, y, radiusX, radiusY, 0, 0, Math.PI * 2);
 }
 
-function roundRect(x, y, width, height, radius) {
+function roundRect(x, y, width, height, radius, targetCtx = ctx) {
   const r = Math.min(radius, width / 2, height / 2);
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + width, y, x + width, y + height, r);
-  ctx.arcTo(x + width, y + height, x, y + height, r);
-  ctx.arcTo(x, y + height, x, y, r);
-  ctx.arcTo(x, y, x + width, y, r);
-  ctx.closePath();
+  targetCtx.beginPath();
+
+  if (typeof targetCtx.roundRect === "function") {
+    targetCtx.roundRect(x, y, width, height, r);
+    return;
+  }
+
+  targetCtx.moveTo(x + r, y);
+  targetCtx.arcTo(x + width, y, x + width, y + height, r);
+  targetCtx.arcTo(x + width, y + height, x, y + height, r);
+  targetCtx.arcTo(x, y + height, x, y, r);
+  targetCtx.arcTo(x, y, x + width, y, r);
+  targetCtx.closePath();
 }
