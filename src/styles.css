@@ -90,6 +90,34 @@ body {
   text-align: center;
 }
 
+.has-esc-badge {
+  position: relative;
+}
+
+.start-panel.has-esc-badge {
+  padding-top: 18px;
+}
+
+.esc-badge {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  min-height: 18px;
+  border: 1px solid rgba(238, 243, 236, 0.16);
+  border-radius: 4px;
+  background: rgba(238, 243, 236, 0.07);
+  color: rgba(238, 243, 236, 0.58);
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0;
+  line-height: 1;
+  pointer-events: none;
+}
+
 .start-title {
   color: #ffffff;
   font-size: 24px;
@@ -706,12 +734,17 @@ body {
   align-items: end;
   gap: 14px;
   width: min(520px, calc(100vw - 32px));
-  padding: 12px;
+  padding: 24px 12px 12px;
   border: 1px solid rgba(238, 243, 236, 0.18);
   border-radius: 6px;
   background: rgba(12, 15, 14, 0.86);
   box-shadow: 0 14px 34px rgba(0, 0, 0, 0.28);
   transform: translateX(-50%);
+}
+
+.result-panel .esc-badge {
+  left: 10px;
+  top: 8px;
 }
 
 .result-panel[hidden] {
@@ -800,6 +833,100 @@ body {
 .result-action.is-secondary {
   min-width: 82px;
   color: rgba(238, 243, 236, 0.64);
+}
+
+.result-action.is-selected {
+  border-color: rgba(238, 243, 236, 0.76);
+  background: rgba(238, 243, 236, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(238, 243, 236, 0.46);
+  color: #ffffff;
+}
+
+.result-action:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.race-pause-panel {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(6, 8, 8, 0.36);
+  z-index: 4;
+}
+
+.race-pause-card {
+  display: grid;
+  gap: 10px;
+  width: min(460px, calc(100vw - 32px));
+  padding: 28px 12px 12px;
+  border: 1px solid rgba(238, 243, 236, 0.18);
+  border-radius: 6px;
+  background: rgba(12, 15, 14, 0.9);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.34);
+}
+
+.race-pause-card .esc-badge {
+  left: 10px;
+  top: 8px;
+}
+
+.race-pause-title {
+  color: #ffffff;
+  font-size: 22px;
+  font-weight: 900;
+  line-height: 1;
+  text-align: center;
+}
+
+.race-pause-hint {
+  color: rgba(238, 243, 236, 0.52);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.2;
+  text-align: center;
+}
+
+.race-pause-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.race-pause-action {
+  display: grid;
+  gap: 5px;
+  min-height: 70px;
+  padding: 10px;
+  border: 1px solid rgba(238, 243, 236, 0.16);
+  border-radius: 5px;
+  background: rgba(238, 243, 236, 0.06);
+  color: rgba(238, 243, 236, 0.68);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.race-pause-action strong {
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 900;
+  line-height: 1.08;
+}
+
+.race-pause-action span {
+  color: rgba(238, 243, 236, 0.48);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.18;
+}
+
+.race-pause-action.is-selected {
+  border-color: rgba(238, 243, 236, 0.74);
+  background: rgba(238, 243, 236, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(238, 243, 236, 0.42);
 }
 
 .control-hint {
@@ -993,6 +1120,14 @@ body {
   .result-action {
     flex: 1 1 0;
     min-width: 0;
+  }
+
+  .race-pause-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .race-pause-action {
+    min-height: 54px;
   }
 
   .metric {

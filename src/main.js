@@ -70,6 +70,7 @@ const GAME_STATE = {
   settings: "settings",
   countdown: "countdown",
   racing: "racing",
+  racePause: "race_pause",
   finishCoast: "finish_coast",
   result: "result",
   replay: "replay",
@@ -162,6 +163,24 @@ const MAIN_MENU_ITEMS = [
     detail: "车手档案和详细数据",
   },
 ];
+const RESULT_ACTION_IDS = ["retry", "replay", "trackSelect"];
+const RACE_PAUSE_ACTION_ITEMS = [
+  {
+    id: "continue",
+    title: "继续",
+    detail: "回到当前尝试",
+  },
+  {
+    id: "restart",
+    title: "重新开始",
+    detail: "放弃本次尝试并从起点重跑",
+  },
+  {
+    id: "trackSelect",
+    title: "赛道选择",
+    detail: "退出本次尝试并选择赛道",
+  },
+];
 
 let vehicleModel = null;
 let TUNING = null;
@@ -170,6 +189,7 @@ let VEHICLE_ACCEL_SEGMENTS = [];
 let VEHICLE_TAIL = null;
 
 const canvas = document.querySelector("#game");
+const gameShell = document.querySelector(".game-shell");
 const ctx = canvas.getContext("2d");
 const speedEl = document.querySelector("#speed");
 const accelEl = document.querySelector("#accel");
@@ -223,7 +243,10 @@ let trackSelectorState = "";
 let selectedMainMenuIndex = 0;
 let selectedTrackActionIndex = 0;
 let selectedRecordIndex = 0;
+let selectedResultActionIndex = 0;
+let selectedRacePauseActionIndex = 0;
 let selectedGhostReplayId = null;
+let racePauseResumeState = GAME_STATE.countdown;
 let leaderboardState = "";
 let localRecordsStatus = "";
 let playerProfile = loadPlayerProfile();
@@ -251,6 +274,7 @@ let inputTick = 0;
 let inputFrame = createEmptyInputFrame();
 let replayCapture = createEmptyReplayCapture();
 let replayPlayback = null;
+let racePausePanel = null;
 let hudUpdateAccumulator = HUD_UPDATE_INTERVAL_S;
 let thumbnailUpdateAccumulator = THUMBNAIL_UPDATE_INTERVAL_S;
 let advancedHudVisible = displaySettings.advancedHudVisible;
@@ -271,23 +295,30 @@ window.addEventListener("keydown", (event) => {
     return;
   }
 
+  if (gameState === GAME_STATE.racePause) {
+    event.preventDefault();
+    handleRacePauseKey(event);
+    return;
+  }
+
   if (event.code === "KeyH" && !isTextEntryTarget(event)) {
     toggleAdvancedHud();
     return;
   }
 
-  if (event.code === "KeyR") {
-    resetCar();
-    openTrackSelection();
+  if (gameState === GAME_STATE.result) {
+    event.preventDefault();
+    handleResultKey(event);
+    return;
+  }
+
+  if (isRacePauseAvailable() && event.code === "Escape") {
+    event.preventDefault();
+    openRacePause();
     return;
   }
 
   if (gameState === GAME_STATE.replay) {
-    return;
-  }
-
-  if (gameState === GAME_STATE.result && (event.code === "Enter" || event.code === "Space")) {
-    restartCurrentTrack();
     return;
   }
 
@@ -335,6 +366,11 @@ function update(dt) {
   if (isMenuOverlayMode()) {
     steeringInput = updateSteeringInput(steeringInput, 0, dt);
     updateCamera(dt);
+    updateHud(dt);
+    return;
+  }
+
+  if (gameState === GAME_STATE.racePause) {
     updateHud(dt);
     return;
   }
@@ -2267,6 +2303,7 @@ function createMainMenuPanel() {
 function createRaceTrackPanel() {
   const panel = document.createElement("section");
   panel.className = "start-panel race-track-panel";
+  addEscBadge(panel);
 
   const title = document.createElement("strong");
   title.className = "start-title";
@@ -2295,6 +2332,7 @@ function createTrackActionPanel() {
 
   const panel = document.createElement("section");
   panel.className = "start-panel track-action-panel";
+  addEscBadge(panel);
 
   const title = document.createElement("strong");
   title.className = "start-title";
@@ -2343,6 +2381,7 @@ function createRecordSelectionPanel() {
 
   const panel = document.createElement("section");
   panel.className = "start-panel record-panel";
+  addEscBadge(panel);
 
   const title = document.createElement("strong");
   title.className = "start-title";
@@ -2396,6 +2435,7 @@ function createRecordToolsPanel() {
 
   const panel = document.createElement("section");
   panel.className = "start-panel record-tools-panel";
+  addEscBadge(panel);
 
   const title = document.createElement("strong");
   title.className = "start-title";
@@ -2417,6 +2457,7 @@ function createRecordToolsPanel() {
 function createMultiplayerPanel() {
   const panel = document.createElement("section");
   panel.className = "start-panel placeholder-panel";
+  addEscBadge(panel);
 
   const title = document.createElement("strong");
   title.className = "start-title";
@@ -2438,6 +2479,7 @@ function createMultiplayerPanel() {
 function createSettingsPanel() {
   const panel = document.createElement("section");
   panel.className = "start-panel settings-panel";
+  addEscBadge(panel);
 
   const title = document.createElement("strong");
   title.className = "start-title";
@@ -2826,6 +2868,7 @@ function updateResultPanel() {
   }
 
   resultPanel.hidden = gameState !== GAME_STATE.result || !lastFinishResult;
+  resultPanel.classList.toggle("has-esc-badge", !resultPanel.hidden);
   if (resultPanel.hidden) {
     resultPanel.replaceChildren();
     return;
@@ -2859,37 +2902,306 @@ function updateResultPanel() {
   player.append(swatch, playerName);
   const hint = document.createElement("span");
   hint.className = "result-hint";
-  hint.textContent = "Enter 再来 · R 换赛道";
+  hint.textContent = "←→ 选择 · Enter 确认 · Esc 赛道选择";
 
   summary.append(trackName, time, rank, player, hint);
 
   const actions = document.createElement("div");
   actions.className = "result-actions";
+  const actionItems = getResultActionItems();
+  selectedResultActionIndex = getEnabledActionIndex(selectedResultActionIndex, actionItems, 1);
 
-  const retry = document.createElement("button");
-  retry.type = "button";
-  retry.className = "result-action is-primary";
-  retry.textContent = "再来一次";
-  retry.addEventListener("click", restartCurrentTrack);
+  actionItems.forEach((item, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "result-action";
+    button.classList.toggle("is-primary", item.id === "retry");
+    button.classList.toggle("is-secondary", item.id !== "retry");
+    button.classList.toggle("is-selected", index === selectedResultActionIndex);
+    button.disabled = item.disabled;
+    button.textContent = item.title;
+    button.addEventListener("click", () => {
+      if (item.disabled) {
+        return;
+      }
 
-  const replay = document.createElement("button");
-  replay.type = "button";
-  replay.className = "result-action is-secondary";
-  replay.textContent = "回放";
-  replay.disabled = !getLeaderboardRecordReplayId(lastFinishResult);
-  replay.addEventListener("click", () => startReplayPlayback(getLeaderboardRecordReplayId(lastFinishResult)));
-
-  const select = document.createElement("button");
-  select.type = "button";
-  select.className = "result-action is-secondary";
-  select.textContent = "换赛道";
-  select.addEventListener("click", () => {
-    resetCar();
-    openTrackSelection();
+      selectedResultActionIndex = index;
+      activateResultAction(item.id);
+    });
+    actions.append(button);
   });
 
-  actions.append(retry, replay, select);
-  resultPanel.replaceChildren(summary, actions);
+  resultPanel.replaceChildren(createEscBadge("ESC"), summary, actions);
+}
+
+function createEscBadge(label = "ESC") {
+  const badge = document.createElement("span");
+  badge.className = "esc-badge";
+  badge.textContent = label;
+
+  return badge;
+}
+
+function addEscBadge(panel, label = "ESC") {
+  panel.classList.add("has-esc-badge");
+  panel.append(createEscBadge(label));
+}
+
+function getResultActionItems() {
+  const replayId = getLeaderboardRecordReplayId(lastFinishResult);
+
+  return RESULT_ACTION_IDS.map((id) => {
+    if (id === "retry") {
+      return {
+        id,
+        title: "再来一次",
+        disabled: false,
+      };
+    }
+
+    if (id === "replay") {
+      return {
+        id,
+        title: "回放",
+        disabled: !replayId,
+      };
+    }
+
+    return {
+      id,
+      title: "赛道选择",
+      disabled: false,
+    };
+  });
+}
+
+function getEnabledActionIndex(index, items, direction) {
+  if (items.length === 0 || items.every((item) => item.disabled)) {
+    return 0;
+  }
+
+  if (items[index] && !items[index].disabled) {
+    return index;
+  }
+
+  return getNextEnabledActionIndex(index, direction, items);
+}
+
+function getNextEnabledActionIndex(index, direction, items) {
+  if (items.length === 0 || items.every((item) => item.disabled)) {
+    return 0;
+  }
+
+  for (let step = 1; step <= items.length; step += 1) {
+    const nextIndex = wrapIndex(index + direction * step, items.length);
+    if (!items[nextIndex].disabled) {
+      return nextIndex;
+    }
+  }
+
+  return 0;
+}
+
+function handleResultKey(event) {
+  if (event.code === "Escape" || event.code === "Backspace") {
+    resetCar();
+    openTrackSelection(activeTrackId);
+    return true;
+  }
+
+  if (event.code === "ArrowLeft" || event.code === "KeyA") {
+    moveResultActionSelection(-1);
+    return true;
+  }
+
+  if (event.code === "ArrowRight" || event.code === "KeyD") {
+    moveResultActionSelection(1);
+    return true;
+  }
+
+  if (event.code === "Enter" || event.code === "Space") {
+    activateSelectedResultAction();
+    return true;
+  }
+
+  return false;
+}
+
+function moveResultActionSelection(direction) {
+  const items = getResultActionItems();
+  selectedResultActionIndex = getNextEnabledActionIndex(selectedResultActionIndex, direction, items);
+  updateResultPanel();
+}
+
+function activateSelectedResultAction() {
+  const items = getResultActionItems();
+  selectedResultActionIndex = getEnabledActionIndex(selectedResultActionIndex, items, 1);
+  const item = items[selectedResultActionIndex];
+  if (!item || item.disabled) {
+    return;
+  }
+
+  activateResultAction(item.id);
+}
+
+function activateResultAction(actionId) {
+  if (actionId === "retry") {
+    restartCurrentTrack();
+    return;
+  }
+
+  if (actionId === "replay") {
+    const replayId = getLeaderboardRecordReplayId(lastFinishResult);
+    if (replayId) {
+      startReplayPlayback(replayId);
+    }
+    return;
+  }
+
+  if (actionId === "trackSelect") {
+    resetCar();
+    openTrackSelection(activeTrackId);
+  }
+}
+
+function isRacePauseAvailable() {
+  return gameState === GAME_STATE.countdown || gameState === GAME_STATE.racing;
+}
+
+function openRacePause() {
+  if (!isRacePauseAvailable()) {
+    return;
+  }
+
+  keys.clear();
+  racePauseResumeState = gameState;
+  selectedRacePauseActionIndex = 0;
+  setGameState(GAME_STATE.racePause);
+  renderRacePausePanel();
+  updateHud(HUD_UPDATE_INTERVAL_S, true);
+  draw();
+}
+
+function closeRacePause() {
+  keys.clear();
+  setGameState(racePauseResumeState);
+  updateHud(HUD_UPDATE_INTERVAL_S, true);
+  draw();
+}
+
+function renderRacePausePanel() {
+  if (!gameShell) {
+    return;
+  }
+
+  if (!racePausePanel) {
+    racePausePanel = document.createElement("section");
+    racePausePanel.className = "race-pause-panel";
+    racePausePanel.setAttribute("aria-live", "polite");
+    gameShell.append(racePausePanel);
+  }
+
+  const card = document.createElement("div");
+  card.className = "race-pause-card";
+  addEscBadge(card);
+
+  const title = document.createElement("strong");
+  title.className = "race-pause-title";
+  title.textContent = "本次尝试";
+
+  const hint = document.createElement("span");
+  hint.className = "race-pause-hint";
+  hint.textContent = "←→ 选择 · Enter 确认 · Esc 继续";
+
+  const actions = document.createElement("div");
+  actions.className = "race-pause-actions";
+
+  RACE_PAUSE_ACTION_ITEMS.forEach((item, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "race-pause-action";
+    button.classList.toggle("is-selected", index === selectedRacePauseActionIndex);
+    button.addEventListener("click", () => {
+      selectedRacePauseActionIndex = index;
+      activateRacePauseAction(item.id);
+    });
+
+    const name = document.createElement("strong");
+    name.textContent = item.title;
+
+    const detail = document.createElement("span");
+    detail.textContent = item.detail;
+
+    button.append(name, detail);
+    actions.append(button);
+  });
+
+  card.append(title, hint, actions);
+  racePausePanel.replaceChildren(card);
+}
+
+function removeRacePausePanel() {
+  racePausePanel?.remove();
+  racePausePanel = null;
+}
+
+function handleRacePauseKey(event) {
+  if (event.code === "Escape" || event.code === "Backspace") {
+    closeRacePause();
+    return true;
+  }
+
+  if (
+    event.code === "ArrowLeft"
+    || event.code === "KeyA"
+    || event.code === "ArrowUp"
+    || event.code === "KeyW"
+  ) {
+    moveRacePauseSelection(-1);
+    return true;
+  }
+
+  if (
+    event.code === "ArrowRight"
+    || event.code === "KeyD"
+    || event.code === "ArrowDown"
+    || event.code === "KeyS"
+  ) {
+    moveRacePauseSelection(1);
+    return true;
+  }
+
+  if (event.code === "Enter" || event.code === "Space") {
+    const item = RACE_PAUSE_ACTION_ITEMS[selectedRacePauseActionIndex];
+    if (item) {
+      activateRacePauseAction(item.id);
+    }
+    return true;
+  }
+
+  return false;
+}
+
+function moveRacePauseSelection(direction) {
+  selectedRacePauseActionIndex = wrapIndex(selectedRacePauseActionIndex + direction, RACE_PAUSE_ACTION_ITEMS.length);
+  renderRacePausePanel();
+}
+
+function activateRacePauseAction(actionId) {
+  if (actionId === "continue") {
+    closeRacePause();
+    return;
+  }
+
+  if (actionId === "restart") {
+    restartCurrentTrack();
+    return;
+  }
+
+  if (actionId === "trackSelect") {
+    resetCar();
+    openTrackSelection(activeTrackId);
+  }
 }
 
 function formatResultRank(result) {
@@ -4225,6 +4537,14 @@ function isTextEntryTarget(event) {
 function setGameState(nextState) {
   if (gameState === nextState) {
     return;
+  }
+
+  if (gameState === GAME_STATE.racePause && nextState !== GAME_STATE.racePause) {
+    removeRacePausePanel();
+  }
+
+  if (nextState === GAME_STATE.result) {
+    selectedResultActionIndex = 0;
   }
 
   gameState = nextState;
